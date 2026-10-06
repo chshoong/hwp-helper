@@ -48,6 +48,10 @@ _TOC_DOTS = re.compile(r"(\.{3,}|·{3,}|…|‥)\s*\d+\s*$")
 EQ_NUMBER = re.compile(r"^\(\s*\d+(?:[-.]\d+)?\s*\)$")
 
 
+# 본문 견본이 없을 때 글머리만 빼고 본문으로 쓸 글머리 (개조식 양식은 ○가 보통 본문 글)
+BODY_FROM = ("bullet2", "bullet1", "bullet3", "bullet4")
+
+
 class SampleError(ValueError):
     """양식에서 필요한 견본을 찾지 못함. 메시지는 사용자용 한국어."""
 
@@ -86,6 +90,11 @@ class Catalog:
         lines = []
         for role, ko in ROLE_KO.items():
             st = self.paras.get(role)
+            if st is None and role == "body":
+                src = next((r for r in BODY_FROM if r in self.paras), None)
+                lines.append(f"{ko}: 견본 없음 → '{self.paras[src].example}' 서식을 글머리 없이 씀" if src
+                             else f"{ko}: 견본 없음 → 양식의 '본문'·'바탕글' 스타일로 씀")
+                continue
             if st is None:
                 try:
                     alt = self.require(role)
@@ -270,9 +279,8 @@ def infer(pkg: Package, section: str | None = None) -> Catalog:
     chars = bullet_chars(h)
     tops = top_paragraphs(pkg, section)
     paras, notes, captions = learn(tops, h, chars)
-    for role in ("h1", "body"):
-        if role not in paras:
-            notes.append(f"{ROLE_KO[role]} 견본을 찾지 못했어요.")
+    if "h1" not in paras:
+        notes.append(f"{ROLE_KO['h1']} 견본을 찾지 못했어요.")  # 본문은 없어도 글머리·스타일로 대신 쓴다(describe 참고)
     samples_ = [p for p in tops if _is_table_sample(p, h)]
     captioned = [p for p in samples_ if next(p.iter(q("hp:tbl"))).find(q("hp:caption")) is not None]
     table_para = copy.deepcopy((captioned or samples_)[0]) if samples_ else None

@@ -165,11 +165,13 @@ def test_render_into_real_final_report(private_dir, tmp_path, capsys):
     assert "page001.png" in capsys.readouterr().out
 
 
-def test_render_into_template_without_body_sample_is_user_error(blank, tmp_path, capsys):
+def test_render_into_template_without_body_sample_uses_body_style(blank, tmp_path):
+    """본문 견본이 없는 양식도 '본문'·'바탕글' 스타일로 쓴다 (예전에는 오류로 멈췄음)."""
     md = tmp_path / "a.md"
     md.write_text("그냥 본문 문장", encoding="utf-8")
-    assert main(["render", str(blank), str(md), str(tmp_path / "o.hwpx")]) == 2
-    assert "본문" in capsys.readouterr().err
+    out = tmp_path / "o.hwpx"
+    assert main(["render", str(blank), str(md), str(out)]) == 0
+    assert out.is_file()
 
 
 @pytest.mark.hangul

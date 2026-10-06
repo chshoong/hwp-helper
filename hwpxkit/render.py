@@ -22,7 +22,7 @@ from .layout import distribute, fit_image, page_geometry
 from .mdparse import BULLETS, Bullet, Figure, Heading, Math, PageBreak, Para, Span, Table, parse, parse_inline
 from .ns import q
 from .package import Package
-from .samples import EQ_NUMBER, Catalog, ParaStyle
+from .samples import BODY_FROM, EQ_NUMBER, Catalog, ParaStyle
 
 _SYMBOL = {1: "□", 2: "○", 3: "-", 4: "·"}
 
@@ -36,8 +36,8 @@ class Renderer:
                  start: dict[str, int] | None = None):
         self.pkg = pkg
         self._start = start or {}  # 넣을 자리 앞에 이미 있는 캡션 수 {"tbl": n, "fig": n}
-        self.cat = catalog
         self.h = Header(pkg)
+        self.cat = self._with_body(catalog)
         self.base_dir = Path(base_dir)
         self.geo = page_geometry(pkg)
         self.ids = IdAllocator(pkg)
@@ -60,6 +60,30 @@ class Renderer:
             out.extend(self._block(b))
         for el in out:
             strip_lineseg(el)
+        return out
+
+    def _with_body(self, cat: Catalog) -> Catalog:
+        """본문 견본이 없는 양식: 글머리 견본(○ 우선)에서 글머리·내어쓰기만 뺀 서식, 없으면 '본문'·'바탕글' 스타일.
+        호출한 쪽 견본 목록은 그대로 두고 복사본을 쓴다."""
+        if "body" in cat.paras:
+            return cat
+        src = next((cat.paras[r] for r in BODY_FROM if r in cat.paras), None)
+        if src is not None:
+            def plain(e):
+                heading = e.find(q("hh:heading"))
+                if heading is not None:
+                    heading.attrib.update({"type": "NONE", "idRef": "0", "level": "0"})
+                for m in e.iter(q("hc:intent")):
+                    m.set("value", "0")
+            body = ParaStyle(self.h.derive("paraPr", src.para_pr, plain), "0", src.char_pr, example="")
+        else:
+            sid = self.h.style_id("본문") or self.h.style_id("바탕글")
+            if sid is None:
+                return cat
+            e = self.h.get("style", sid)
+            body = ParaStyle(e.get("paraPrIDRef"), sid, e.get("charPrIDRef"))
+        out = copy.copy(cat)
+        out.paras = {**cat.paras, "body": body}
         return out
 
     # 번호 -----------------------------------------------------------------
