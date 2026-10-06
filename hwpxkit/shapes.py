@@ -34,6 +34,36 @@ def solid_border_fill(h: Header) -> str:
     return h.derive("borderFill", base, mutate)
 
 
+def shaded_border_fill(h: Header, color: str = "#E7E6E6") -> str:
+    """실선 0.12mm 테두리 + 연한 배경(머리 행용)."""
+    base = solid_border_fill(h)
+
+    def mutate(e):
+        brush = e.find(q("hc:fillBrush"))
+        if brush is None:
+            brush = etree.SubElement(e, q("hc:fillBrush"))
+        win = brush.find(q("hc:winBrush"))
+        if win is None:
+            win = etree.SubElement(brush, q("hc:winBrush"), {"hatchColor": "#999999", "alpha": "0"})
+        win.set("faceColor", color)
+
+    return h.derive("borderFill", base, mutate)
+
+
+def cell_para_pr(h: Header, base) -> str:
+    """표 칸용 문단 모양: 가운데 정렬, 들여쓰기·여백·문단 간격 없음, 글머리 없음."""
+    def mutate(e):
+        e.find(q("hh:align")).set("horizontal", "CENTER")
+        heading = e.find(q("hh:heading"))
+        if heading is not None:
+            heading.attrib.update({"type": "NONE", "idRef": "0", "level": "0"})
+        for margin in e.iter(q("hh:margin")):
+            for m in margin:
+                m.set("value", "0")
+
+    return h.derive("paraPr", base, mutate)
+
+
 def new_picture(bid: str, px_w: int, px_h: int, w: int, h: int, name: str) -> etree._Element:
     pic = etree.Element(q("hp:pic"), {
         "id": "0", "zOrder": "0", "numberingType": "PICTURE", "textWrap": "TOP_AND_BOTTOM",
@@ -88,18 +118,33 @@ def set_picture(pic: etree._Element, bid: str, px_w: int, px_h: int, w: int, h: 
         f"그림입니다.\n원본 그림의 이름: {name}\n원본 그림의 크기: 가로 {px_w}pixel, 세로 {px_h}pixel")
 
 
-def new_caption(text: str, width: int, para_pr: str, style: str, char_pr: str) -> etree._Element:
-    cap = etree.Element(q("hp:caption"), {"side": "BOTTOM", "fullSz": "0", "width": "8504", "gap": "850",
+def _caption_runs(p: etree._Element, char: str, text: str, auto) -> None:
+    """캡션 문단에 글을 넣는다. auto=(앞 글, 번호, 'TABLE'|'PICTURE', 뒤 글)이면 번호를 한글 자동 번호로."""
+    run = etree.SubElement(p, q("hp:run"), {"charPrIDRef": char})
+    if auto is None:
+        etree.SubElement(run, q("hp:t")).text = text
+        return
+    before, num, num_type, after = auto
+    etree.SubElement(run, q("hp:t")).text = before
+    ctrl = etree.SubElement(run, q("hp:ctrl"))
+    an = etree.SubElement(ctrl, q("hp:autoNum"), {"num": str(num), "numType": num_type})
+    etree.SubElement(an, q("hp:autoNumFormat"), {"type": "DIGIT", "userChar": "", "prefixChar": "",
+                                                  "suffixChar": "", "supscript": "0"})
+    etree.SubElement(run, q("hp:t")).text = after
+
+
+def new_caption(text: str, width: int, para_pr: str, style: str, char_pr: str,
+                side: str = "BOTTOM", auto=None) -> etree._Element:
+    cap = etree.Element(q("hp:caption"), {"side": side, "fullSz": "0", "width": "8504", "gap": "850",
                                           "lastWidth": str(width)})
     sub = etree.SubElement(cap, q("hp:subList"), dict(_SUBLIST))
     p = etree.SubElement(sub, q("hp:p"), {**_P, "paraPrIDRef": para_pr, "styleIDRef": style})
-    run = etree.SubElement(p, q("hp:run"), {"charPrIDRef": char_pr})
-    etree.SubElement(run, q("hp:t")).text = text
+    _caption_runs(p, char_pr, text, auto)
     return cap
 
 
-def set_caption(cap: etree._Element, text: str, width: int) -> None:
-    """캡션을 글자 한 덩어리로 바꾼다. 견본의 자동 번호 컨트롤은 지운다(번호는 엔진이 계산)."""
+def set_caption(cap: etree._Element, text: str, width: int, auto=None) -> None:
+    """견본 캡션의 서식은 두고 글만 바꾼다. 번호는 auto가 있으면 한글 자동 번호, 없으면 글자."""
     sub = cap.find(q("hp:subList"))
     tmpl = sub.find(q("hp:p"))
     runs = tmpl.findall(q("hp:run")) if tmpl is not None else []
@@ -109,9 +154,16 @@ def set_caption(cap: etree._Element, text: str, width: int) -> None:
     for p in list(sub):
         sub.remove(p)
     p = etree.SubElement(sub, q("hp:p"), attrs)
-    run = etree.SubElement(p, q("hp:run"), {"charPrIDRef": char})
-    etree.SubElement(run, q("hp:t")).text = text
+    _caption_runs(p, char, text, auto)
     cap.set("lastWidth", str(width))
+
+
+def attach_caption(obj: etree._Element, cap: etree._Element) -> None:
+    """표(hp:tbl)는 outMargin 바로 뒤, 그림(hp:pic)은 맨 끝에 캡션을 붙인다 (한글이 저장하는 위치)."""
+    if obj.tag == q("hp:tbl"):
+        obj.insert(list(obj).index(obj.find(q("hp:outMargin"))) + 1, cap)
+    else:
+        obj.append(cap)
 
 
 def _cell(border_fill: str, para_pr: str, style: str, char_pr: str, row_h: int) -> etree._Element:
@@ -127,8 +179,9 @@ def _cell(border_fill: str, para_pr: str, style: str, char_pr: str, row_h: int) 
     return tc
 
 
-def new_table_para(h: Header, body, width: int, row_h: int = 1500):
-    """행이 없는 실선 표를 담은 문단과, 머리행·본문행 칸 견본을 돌려준다."""
+def new_table_para(h: Header, body, width: int, row_h: int = 1500, *, tidy: bool = True):
+    """행이 없는 실선 표를 담은 문단과, 머리행·본문행 칸 견본을 돌려준다.
+    tidy: 데이터 표 모양(머리 행 음영·굵게, 칸 가운데 정렬·들여쓰기 없음, 10pt 이하)."""
     bf = solid_border_fill(h)
     p = etree.Element(q("hp:p"), {**_P, "paraPrIDRef": body.para_pr, "styleIDRef": body.style})
     run = etree.SubElement(p, q("hp:run"), {"charPrIDRef": body.char_pr})
@@ -146,8 +199,15 @@ def new_table_para(h: Header, body, width: int, row_h: int = 1500):
     etree.SubElement(tbl, q("hp:outMargin"), {"left": "283", "right": "283", "top": "283", "bottom": "283"})
     etree.SubElement(tbl, q("hp:inMargin"), dict(_CELL_MARGIN))
     etree.SubElement(run, q("hp:t"))
-    head = _cell(bf, body.para_pr, body.style, h.derive_charpr(body.char_pr, bold=True), row_h)
-    cell = _cell(bf, body.para_pr, body.style, body.char_pr, row_h)
+    if not tidy:
+        head = _cell(bf, body.para_pr, body.style, h.derive_charpr(body.char_pr, bold=True), row_h)
+        return p, tbl, head, _cell(bf, body.para_pr, body.style, body.char_pr, row_h)
+    tbl.find(q("hp:inMargin")).attrib.update({"top": "283", "bottom": "283"})  # 칸 위아래 1mm
+    pp = cell_para_pr(h, body.para_pr)
+    size = min(int(h.get("charPr", body.char_pr).get("height", 1000)), 1000)
+    char = h.derive_charpr(body.char_pr, height=size)
+    head = _cell(shaded_border_fill(h), pp, body.style, h.derive_charpr(char, bold=True), row_h)
+    cell = _cell(bf, pp, body.style, char, row_h)
     return p, tbl, head, cell
 
 
@@ -193,7 +253,7 @@ def no_border_fill(h: Header) -> str:
 
 def new_eq_table_para(h: Header, body, width: int, eq: etree._Element, number: str) -> etree._Element:
     """번호 붙은 문단 수식: 선 없는 1행 2열 표 (왼쪽 수식 가운데, 오른쪽 번호 오른쪽 정렬)."""
-    p, tbl, _, cell = new_table_para(h, body, width)
+    p, tbl, _, cell = new_table_para(h, body, width, tidy=False)
     bf = no_border_fill(h)
     tbl.set("borderFillIDRef", bf)
     tbl.set("rowCnt", "1")

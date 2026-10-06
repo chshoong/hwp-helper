@@ -178,10 +178,39 @@ def _label_format(texts: list[str], word: str, default: str) -> str:
     return default
 
 
-def _is_table_sample(p: etree._Element) -> bool:
+def _cell_heights(tcs, h: Header) -> list[int]:
+    out = []
+    for tc in tcs:
+        for run in tc.iter(q("hp:run")):
+            t = run.find(q("hp:t"))
+            if t is not None and (t.text or "").strip():
+                out.append(int(h.get("charPr", run.get("charPrIDRef")).get("height", 1000)))
+    return out
+
+
+def _is_table_sample(p: etree._Element, h: Header) -> bool:
+    """데이터 표 견본으로 쓸 만한 표인가. 표지·서명란·작성 요령 상자 같은 서식용 표는 뺀다:
+    첫 행에 글자가 없거나, 한 칸이 표 너비 전체를 차지하거나, 표 안에 표가 있거나,
+    머리 행 글자가 본문 칸보다 훨씬 큰 표."""
     tbl = next(p.iter(q("hp:tbl")), None)
-    return (tbl is not None and int(tbl.get("rowCnt", 0)) >= 2 and int(tbl.get("colCnt", 0)) >= 2
-            and not contains(tbl, "hp:equation"))
+    if tbl is None or contains(tbl, "hp:equation"):
+        return False
+    rows, cols = int(tbl.get("rowCnt", 0)), int(tbl.get("colCnt", 0))
+    if rows < 2 or cols < 2 or sum(1 for _ in tbl.iter(q("hp:tbl"))) > 1:
+        return False
+    tcs = list(tbl.iter(q("hp:tc")))
+    if any(int((tc.find(q("hp:cellSpan")).get("colSpan", "1") if tc.find(q("hp:cellSpan")) is not None else "1"))
+           >= cols for tc in tcs):
+        return False
+    trs = tbl.findall(q("hp:tr"))
+    head = trs[0].findall(q("hp:tc"))
+    if not head or not any(all_text(tc).strip() for tc in head):
+        return False
+    head_h = _cell_heights(head, h)
+    body_h = sorted(_cell_heights([tc for tr in trs[1:] for tc in tr.findall(q("hp:tc"))], h))
+    if head_h and body_h and max(head_h) > 1.4 * body_h[len(body_h) // 2]:
+        return False
+    return True
 
 
 def _eq_number_cell(tbl: etree._Element) -> etree._Element | None:
@@ -244,7 +273,7 @@ def infer(pkg: Package, section: str | None = None) -> Catalog:
     for role in ("h1", "body"):
         if role not in paras:
             notes.append(f"{ROLE_KO[role]} 견본을 찾지 못했어요.")
-    samples_ = [p for p in tops if _is_table_sample(p)]
+    samples_ = [p for p in tops if _is_table_sample(p, h)]
     captioned = [p for p in samples_ if next(p.iter(q("hp:tbl"))).find(q("hp:caption")) is not None]
     table_para = copy.deepcopy((captioned or samples_)[0]) if samples_ else None
     figure_para = next((copy.deepcopy(p) for p in tops if contains(p, "hp:pic") and contains(p, "hp:caption")), None)

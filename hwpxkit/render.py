@@ -32,8 +32,10 @@ class RenderError(ValueError):
 
 
 class Renderer:
-    def __init__(self, pkg: Package, catalog: Catalog, *, base_dir: Path = Path(".")):
+    def __init__(self, pkg: Package, catalog: Catalog, *, base_dir: Path = Path("."),
+                 start: dict[str, int] | None = None):
         self.pkg = pkg
+        self._start = start or {}  # 넣을 자리 앞에 이미 있는 캡션 수 {"tbl": n, "fig": n}
         self.cat = catalog
         self.h = Header(pkg)
         self.base_dir = Path(base_dir)
@@ -42,6 +44,7 @@ class Renderer:
         self.labels: dict[str, str] = {}
         self._warnings: list[str] = []
         self._numbers: dict[int, str] = {}
+        self._counts: dict[int, int] = {}
         self._page_break = False
         self._last_blank = True
         self.equation_count = 0
@@ -65,7 +68,7 @@ class Renderer:
 
     def _assign_numbers(self, blocks) -> None:
         chapter = 0
-        counters: Counter = Counter()
+        counters: Counter = Counter({k: n for k, n in self._start.items() if "{c}" not in self._fmt(k)})
         for b in blocks:
             if isinstance(b, Heading) and b.level == 1:
                 chapter += 1
@@ -79,6 +82,7 @@ class Renderer:
             counters[kind] += 1
             text = self._fmt(kind).format(c=max(chapter, 1), n=counters[kind])
             self._numbers[id(b)] = text
+            self._counts[id(b)] = counters[kind]
             if b.label:
                 if b.label in self.labels:
                     raise RenderError(f"같은 이름표가 두 번 쓰였어요: #{b.label}")
@@ -191,22 +195,53 @@ class Renderer:
         return sp.text
 
     # 표·그림 (Task 5·6) ---------------------------------------------------
+    def _caption(self, kind: str, b) -> tuple[str, tuple | None]:
+        """캡션 글과 한글 자동 번호 정보. 장별 번호({c})는 자동 번호로 못 만들어 글자로 둔다."""
+        text = f"{self._numbers[id(b)]} {b.caption}".strip()
+        fmt = self._fmt(kind)
+        if "{c}" in fmt or fmt.count("{n}") != 1:
+            return text, None
+        before, after = fmt.split("{n}")
+        rest = f"{after} {b.caption}" if b.caption else after
+        return text, (before, self._counts[id(b)], "TABLE" if kind == "tbl" else "PICTURE", rest)
+
+    def _caption_style(self, role: str) -> ParaStyle:
+        """캡션 문단 서식: 양식의 캡션 견본 → 양식의 '캡션' 스타일 → 대신 쓸 견본."""
+        if role in self.cat.paras:
+            return self.cat.paras[role]
+        sid = self.h.style_id("캡션")
+        if sid is not None:
+            e = self.h.get("style", sid)
+            return ParaStyle(e.get("paraPrIDRef"), sid, e.get("charPrIDRef"))
+        return self.cat.require(role)
+
+    def _new_caption(self, role: str, text: str, auto, width: int, side: str) -> etree._Element:
+        st = self._caption_style(role)
+        return shapes.new_caption(text, width, st.para_pr, st.style, st.char_pr, side=side, auto=auto)
+
+    def _table_text_style(self) -> ParaStyle:
+        """기본 표의 칸 글자 서식: 본문 견본 → 양식의 '표내용' 스타일 → 바탕글."""
+        if "body" in self.cat.paras:
+            return self.cat.paras["body"]
+        for name in ("표내용", "바탕글"):
+            sid = self.h.style_id(name)
+            if sid is not None:
+                e = self.h.get("style", sid)
+                return ParaStyle(e.get("paraPrIDRef"), sid, e.get("charPrIDRef"))
+        return self.cat.require("body")
+
     def _table(self, b: Table) -> list[etree._Element]:
-        caption = f"{self._numbers[id(b)]} {b.caption}".strip() if (b.caption or b.label) else None
+        caption = self._caption("tbl", b) if (b.caption or b.label) else None
         try:
-            tp, inner = self._table_para(b, caption)
+            tp = self._table_para(b, caption)
         except RenderError as e:
             raise RenderError(f"{b.lineno}번째 줄 표: {e}") from None
-        out = []
-        if caption and not inner:
-            out += self._para("caption_tbl", [Span("text", caption)])
         self._take_page_break(tp)
-        out.append(tp)
         self._last_blank = False
-        return out
+        return [tp]
 
-    def _table_para(self, b: Table, caption: str | None) -> tuple[etree._Element, bool]:
-        """표 문단과, 캡션을 표 안쪽(hp:caption)에 넣었는지 여부."""
+    def _table_para(self, b: Table, caption) -> etree._Element:
+        """표 문단. 캡션은 표에 붙은 한글 캡션(hp:caption, 위쪽)으로 넣는다."""
         rows = b.rows
         n_rows, n_cols = len(rows), len(rows[0])
         spans, covered = _merge_marks(rows)
@@ -227,16 +262,16 @@ class Renderer:
                 tbl.remove(tr)
             _clean_object_para(p, tbl)
         else:
-            p, tbl, head_tc, body_tc = shapes.new_table_para(self.h, self.cat.require("body"), self.geo.text_width)
+            p, tbl, head_tc, body_tc = shapes.new_table_para(self.h, self._table_text_style(), self.geo.text_width)
         total = int(tbl.find(q("hp:sz")).get("width"))
-        inner = False
         cap = tbl.find(q("hp:caption"))
         if cap is not None:
             if caption:
-                shapes.set_caption(cap, caption, total)
-                inner = True
+                shapes.set_caption(cap, caption[0], total, caption[1])
             else:
                 tbl.remove(cap)
+        elif caption:
+            shapes.attach_caption(tbl, self._new_caption("caption_tbl", *caption, total, "TOP"))
         cols = distribute(total, weights)
         row_h = int(body_tc.find(q("hp:cellSz")).get("height"))
         tbl.set("rowCnt", str(n_rows))
@@ -255,7 +290,7 @@ class Renderer:
                 self._fill_cell(tc, rows[r][c])
                 tr.append(tc)
         self.ids.refresh(p)
-        return p, inner
+        return p
 
     def _fill_cell(self, tc: etree._Element, text: str) -> None:
         sub = tc.find(q("hp:subList"))
@@ -312,7 +347,7 @@ class Renderer:
         bid = self.pkg.add_bin(data, ext)
         w, h = fit_image(px_w, px_h, self.geo.text_width, ratio=b.width,
                          max_height_hu=int(self.geo.text_height * 0.85))
-        caption = f"{self._numbers[id(b)]} {b.caption}".strip()
+        caption = self._caption("fig", b)
         cap = None
         if self.cat.figure_para is not None:
             p = copy.deepcopy(self.cat.figure_para)
@@ -321,7 +356,7 @@ class Renderer:
             shapes.set_picture(pic, bid, px_w, px_h, w, h, path.name)
             cap = pic.find(q("hp:caption"))
             if cap is not None:
-                shapes.set_caption(cap, caption, w)
+                shapes.set_caption(cap, caption[0], w, caption[1])
         else:
             st = self.cat.require("caption_fig")
             p = etree.Element(q("hp:p"), {"id": "0", "paraPrIDRef": st.para_pr, "styleIDRef": st.style,
@@ -329,13 +364,13 @@ class Renderer:
             run = etree.SubElement(p, q("hp:run"), {"charPrIDRef": st.char_pr})
             run.append(shapes.new_picture(bid, px_w, px_h, w, h, path.name))
             etree.SubElement(run, q("hp:t"))
+        if cap is None:
+            pic = next(p.iter(q("hp:pic")))
+            shapes.attach_caption(pic, self._new_caption("caption_fig", *caption, w, "BOTTOM"))
         self._take_page_break(p)
         self.ids.refresh(p)
-        out = [p]
-        if cap is None:
-            out += self._para("caption_fig", [Span("text", caption)])
         self._last_blank = False
-        return out
+        return [p]
 
 
 def _display_width(text: str) -> int:
@@ -431,6 +466,24 @@ def _missing_samples(blocks, catalog: Catalog) -> list[str]:
     return [name for name, ok in need.items() if not ok]
 
 
+def _caption_counts(paragraphs) -> dict[str, int]:
+    """문단들 안에 캡션 달린 표·그림이 몇 개인가 (한글 자동 번호가 세는 것)."""
+    out = {"tbl": 0, "fig": 0}
+    for p in paragraphs:
+        for kind, tag in (("tbl", "hp:tbl"), ("fig", "hp:pic")):
+            out[kind] += sum(1 for el in p.iter(q(tag)) if el.find(q("hp:caption")) is not None)
+    return out
+
+
+def _unnumber_captionless(pkg: Package) -> None:
+    """캡션 없는 표·그림(표지, 작성 요령 상자, 수식 번호 표 등)은 한글 자동 번호를 세지 않게 한다.
+    그대로 두면 첫 캡션 표가 '표 2'처럼 밀린다. 화면에는 변화가 없다."""
+    for sec in pkg.section_names():
+        for el in pkg.edit(sec).iter(q("hp:tbl"), q("hp:pic")):
+            if el.find(q("hp:caption")) is None and el.get("numberingType") in ("TABLE", "PICTURE"):
+                el.set("numberingType", "NONE")
+
+
 def render_into(pkg: Package, catalog: Catalog, md: str, *, mode: str = "new",
                 replace: tuple[int, int] | None = None, base_dir: Path = Path("."),
                 section: str | None = None) -> list[str]:
@@ -446,14 +499,17 @@ def render_into(pkg: Package, catalog: Catalog, md: str, *, mode: str = "new",
             raise RenderError(f"바꿀 범위 {start}:{end}가 문서 문단 범위(1~{count})를 벗어나요.")
     elif mode not in ("new", "append"):
         raise RenderError(f"알 수 없는 넣기 방식이에요: {mode} (가능: new, append)")
-    r = Renderer(pkg, catalog, base_dir=base_dir)
+    tops = [p for p in pkg.xml(name) if p.tag == q("hp:p")]
+    before = [p for sec in pkg.section_names()[:pkg.section_names().index(name)] for p in pkg.xml(sec)]
+    before += tops[:replace[0]] if replace is not None else tops if mode == "append" else tops[:1]
+    r = Renderer(pkg, catalog, base_dir=base_dir, start=_caption_counts(before))
     els = r.build(blocks)
     if replace is not None or mode == "append":
         missing = _missing_samples(blocks, catalog)
         if missing:
-            r._warnings.append(
-                f"이 문서에는 {'·'.join(missing)} 견본이 없어 기본 서식으로 넣었어요. "
-                "원래 양식(또는 프리셋)으로 전체 내용을 새로 만들면 양식 서식 그대로 나와요.")
+            hint = (" 원래 양식(또는 프리셋)으로 전체 내용을 새로 만들면 양식 서식 그대로 나와요."
+                    if mode == "append" and replace is None else "")
+            r._warnings.append(f"이 문서에는 {'·'.join(missing)} 견본이 없어 기본 서식으로 넣었어요.{hint}")
     root = pkg.edit(name)
     tops = [p for p in root if p.tag == q("hp:p")]
     if replace is not None:
@@ -479,4 +535,5 @@ def render_into(pkg: Package, catalog: Catalog, md: str, *, mode: str = "new",
     else:
         for el in els:
             root.append(el)
+    _unnumber_captionless(pkg)
     return r.warnings

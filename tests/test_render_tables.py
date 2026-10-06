@@ -2,7 +2,7 @@ import pytest
 
 from helpers import SECTION, report_template
 from hwpxkit import bridge
-from hwpxkit.body import own_text
+from hwpxkit.body import all_text, own_text
 from hwpxkit.ns import q
 from hwpxkit.package import Package
 from hwpxkit.render import RenderError, _merge_marks, render_into
@@ -75,7 +75,8 @@ def test_caption_number_and_reference(tpl):
     pkg, cat, _ = tpl
     render_into(pkg, cat, TABLE)
     texts = [own_text(p) for p in pkg.xml(SECTION) if p.tag == q("hp:p")]
-    assert "[표 1-1] 활용 사례" in texts
+    caps = [all_text(c) for c in pkg.xml(SECTION).iter(q("hp:caption"))]
+    assert "[표 1-1] 활용 사례" in caps and "[표 1-1] 활용 사례" not in texts
     assert "[표 1-1]에 정리했다." in texts
 
 
@@ -83,8 +84,8 @@ def test_numbers_restart_each_chapter(tpl):
     pkg, cat, _ = tpl
     md = "# 제1장 가\n\n표: 하나\n| a | b |\n| c | d |\n\n# 제2장 나\n\n표: 둘\n| a | b |\n| c | d |\n\n표: 셋\n| a | b |\n| c | d |\n"
     render_into(pkg, cat, md)
-    texts = [own_text(p) for p in pkg.xml(SECTION) if p.tag == q("hp:p")]
-    assert {"[표 1-1] 하나", "[표 2-1] 둘", "[표 2-2] 셋"} <= set(texts)
+    caps = [all_text(c) for c in pkg.xml(SECTION).iter(q("hp:caption"))]
+    assert {"[표 1-1] 하나", "[표 2-1] 둘", "[표 2-2] 셋"} <= set(caps)
 
 
 def test_cloned_tables_get_unique_ids(tpl):

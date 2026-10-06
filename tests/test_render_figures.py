@@ -76,14 +76,16 @@ def test_duplicate_label_raises(tpl):
         render_into(pkg, cat, "![a](figs/flow.png){#fig:x}\n\n![b](figs/flow.png){#fig:x}", base_dir=base)
 
 
-def test_fallback_without_sample_puts_caption_paragraph(tpl):
+def test_fallback_without_sample_puts_hangul_caption(tpl):
+    """견본 그림이 없어도 제목은 그림에 붙은 한글 캡션(아래쪽)으로 넣는다 (사용자 요청)."""
     pkg, cat, base = tpl
     cat.figure_para = None
     render_into(pkg, cat, "![대체](figs/flow.png)", base_dir=base)
     (pic,) = pics(pkg)
-    assert pic.find(q("hp:caption")) is None
+    cap = pic.find(q("hp:caption"))
+    assert cap is not None and cap.get("side") == "BOTTOM" and all_text(cap) == "[그림 1-1] 대체"
     texts = [own_text(p) for p in pkg.xml(SECTION) if p.tag == q("hp:p")]
-    assert "[그림 1-1] 대체" in texts
+    assert "[그림 1-1] 대체" not in texts
     assert [i for i in validate(pkg) if i.level == "error"] == []
 
 
