@@ -1,4 +1,4 @@
-# hwpx-report 플러그인 설계
+# hwp-helper 플러그인 설계
 
 - 작성일: 2026-10-06
 - 상태: 사용자 검토 대기
@@ -143,15 +143,15 @@ Claude가 작성하는 중간 형식. 사람이 읽을 수 있고, `reader`가 h
 ## 10. 스킬·플러그인 구성
 
 ```
-hwpx-report/
+hwp-helper/
 ├─ .claude-plugin/plugin.json, marketplace.json
-├─ skills/hwpx-report/SKILL.md          흐름, 시작 질문, 규칙
-├─ skills/hwpx-report/reference/        markdown-syntax.md, equations.md, style-guide.md, troubleshooting.md
+├─ skills/hwp-helper/SKILL.md          흐름, 시작 질문, 규칙
+├─ skills/hwp-helper/reference/        markdown-syntax.md, equations.md, style-guide.md, troubleshooting.md
 ├─ commands/hwp-write.md, hwp-fill.md, hwp-review.md, hwp-convert.md
 ├─ hwpxkit/                             엔진
 ├─ presets/                             4종
 ├─ tests/                               가상 문서 기반 테스트
-└─ dist/hwpx-report-skill.zip           claude.ai 업로드용(빌드 산출물)
+└─ dist/hwp-helper-skill.zip           claude.ai 업로드용(빌드 산출물)
 ```
 
 - 스킬은 첫 실행 때 의존성(lxml, Pillow)을 확인하고, 없으면 설치 명령을 안내하거나 대신 실행한다.

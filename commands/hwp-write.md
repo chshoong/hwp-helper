@@ -3,7 +3,7 @@ description: 한글(HWPX) 보고서를 새로 쓴다 — 양식이나 프리셋(
 argument-hint: "[주제나 자료 파일, 양식 파일]"
 ---
 
-hwpx-report 스킬의 "2. 새로 쓰기" 절차로 한글 보고서를 쓴다.
+hwp-helper 스킬의 "2. 새로 쓰기" 절차로 한글 보고서를 쓴다.
 
 요청: $ARGUMENTS
 

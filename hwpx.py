@@ -1,4 +1,4 @@
-"""hwpx-report 엔진 실행기. 플러그인 루트나 claude.ai 스킬 폴더 어디에 있어도 같은 폴더의 hwpxkit을 쓴다.
+"""hwp-helper 엔진 실행기. 플러그인 루트나 claude.ai 스킬 폴더 어디에 있어도 같은 폴더의 hwpxkit을 쓴다.
 
 사용: python hwpx.py <명령> ...   (명령 목록: python hwpx.py -h)
 """

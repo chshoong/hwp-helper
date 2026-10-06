@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "hwpxkit"
 version = "0.1.0"
-description = "HWPX 문서 엔진 (hwpx-report 플러그인)"
+description = "HWPX 문서 엔진 (hwp-helper 플러그인)"
 requires-python = ">=3.10"
 dependencies = ["lxml>=4.9", "Pillow>=9"]
 

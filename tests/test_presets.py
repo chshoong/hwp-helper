@@ -98,7 +98,7 @@ def test_documented_fill_addresses_match_progress_preset():
     import re
     from hwpxkit import form
     from pathlib import Path
-    skill = Path(__file__).resolve().parent.parent / "skills" / "hwpx-report"
+    skill = Path(__file__).resolve().parent.parent / "skills" / "hwp-helper"
     text = "\n".join(p.read_text(encoding="utf-8") for p in [skill / "SKILL.md", *(skill / "reference").glob("*.md")])
     lines = sorted(set(re.findall(r"@칸 표\d+ \|[^`\n]+?(?=`|\n)", text)))
     assert lines

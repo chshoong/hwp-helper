@@ -12,10 +12,10 @@ import build_skill_zip  # noqa: E402
 def test_zip_layout(tmp_path):
     z = zipfile.ZipFile(build_skill_zip.build(tmp_path / "s.zip"))
     names = z.namelist()
-    assert "hwpx-report/SKILL.md" in names and "hwpx-report/hwpx.py" in names
-    assert any(n.startswith("hwpx-report/hwpxkit/") for n in names)
-    assert any(n.startswith("hwpx-report/presets/rnd-report/") for n in names)
-    assert any(n.startswith("hwpx-report/reference/") for n in names)
+    assert "hwp-helper/SKILL.md" in names and "hwp-helper/hwpx.py" in names
+    assert any(n.startswith("hwp-helper/hwpxkit/") for n in names)
+    assert any(n.startswith("hwp-helper/presets/rnd-report/") for n in names)
+    assert any(n.startswith("hwp-helper/reference/") for n in names)
 
 
 def test_zip_excludes_private_and_dev_files(tmp_path):
@@ -26,7 +26,7 @@ def test_zip_excludes_private_and_dev_files(tmp_path):
 
 def test_zip_launcher_runs(tmp_path):
     zipfile.ZipFile(build_skill_zip.build(tmp_path / "s.zip")).extractall(tmp_path / "x")
-    out = subprocess.run([sys.executable, str(tmp_path / "x" / "hwpx-report" / "hwpx.py"), "presets"],
+    out = subprocess.run([sys.executable, str(tmp_path / "x" / "hwp-helper" / "hwpx.py"), "presets"],
                          capture_output=True)
     assert out.returncode == 0 and "rnd-report" in out.stdout.decode("utf-8")
 

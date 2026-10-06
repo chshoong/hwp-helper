@@ -7,7 +7,7 @@ import pytest
 from hwpxkit.cli import _parser
 
 ROOT = Path(__file__).resolve().parent.parent
-SKILL = ROOT / "skills" / "hwpx-report"
+SKILL = ROOT / "skills" / "hwp-helper"
 
 
 def frontmatter(path: Path) -> dict:
@@ -20,14 +20,14 @@ def frontmatter(path: Path) -> dict:
 def test_plugin_and_marketplace_json():
     plugin = json.loads((ROOT / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8"))
     market = json.loads((ROOT / ".claude-plugin" / "marketplace.json").read_text(encoding="utf-8"))
-    assert plugin["name"] == "hwpx-report" and plugin["version"] and plugin["description"]
+    assert plugin["name"] == "hwp-helper" and plugin["version"] and plugin["description"]
     assert market["name"] and market["owner"]["name"]
-    assert market["plugins"] == [{"name": "hwpx-report", "source": "./", "description": plugin["description"]}]
+    assert market["plugins"] == [{"name": "hwp-helper", "source": "./", "description": plugin["description"]}]
 
 
 def test_skill_frontmatter_and_references():
     fm = frontmatter(SKILL / "SKILL.md")
-    assert fm["name"].strip() == "hwpx-report" and "한글" in fm["description"]
+    assert fm["name"].strip() == "hwp-helper" and "한글" in fm["description"]
     body = (SKILL / "SKILL.md").read_text(encoding="utf-8")
     for ref in re.findall(r"reference/([\w-]+\.md)", body):
         assert (SKILL / "reference" / ref).is_file(), ref

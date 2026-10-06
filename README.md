@@ -1,4 +1,4 @@
-# hwpx-report
+# hwp-helper
 
 Claude와 함께 **한글(HWP/HWPX) 문서를 서식 그대로** 쓰는 플러그인입니다.
 
@@ -12,21 +12,21 @@ Claude와 함께 **한글(HWP/HWPX) 문서를 서식 그대로** 쓰는 플러�
 
 ```
 /plugin marketplace add chshoong/hwp-helper
-/plugin install hwpx-report@hwpx-report
+/plugin install hwp-helper@hwp-helper
 ```
 
 GitHub에 올리기 전이라면 내려받은 폴더 경로로 추가합니다.
 
 ```
 /plugin marketplace add C:/Users/<사용자>/Documents/hwp-helper
-/plugin install hwpx-report@hwpx-report
+/plugin install hwp-helper@hwp-helper
 ```
 
 필요한 파이썬 부품(`lxml`, `Pillow`)이 없으면 Claude가 설치해도 되는지 먼저 묻습니다.
 
 ### claude.ai
 
-`python scripts/build_skill_zip.py`로 만든 `dist/hwpx-report-skill.zip`을 설정 → 기능 → 스킬에 올립니다. claude.ai에서는 한글이 없으므로 기본 모드(.hwpx 생성, 수식 크기는 추정)로 동작합니다.
+`python scripts/build_skill_zip.py`로 만든 `dist/hwp-helper-skill.zip`을 설정 → 기능 → 스킬에 올립니다. claude.ai에서는 한글이 없으므로 기본 모드(.hwpx 생성, 수식 크기는 추정)로 동작합니다.
 
 ## 처음 쓰는 법
 
@@ -40,7 +40,7 @@ Claude가 형식(양식 파일이 있는지, 어떤 프리셋인지)을 묻고 �
 
 양식의 표 칸을 찾아 채울 내용을 먼저 보여 주고, 확인받은 뒤 채웁니다. 원본 파일은 절대 덮어쓰지 않습니다.
 
-명령으로도 부를 수 있습니다: `/hwpx-report:hwp-write`, `/hwpx-report:hwp-fill`, `/hwpx-report:hwp-review`, `/hwpx-report:hwp-convert`.
+명령으로도 부를 수 있습니다: `/hwp-helper:hwp-write`, `/hwp-helper:hwp-fill`, `/hwp-helper:hwp-review`, `/hwp-helper:hwp-convert`.
 
 ## 프리셋 4종
 
@@ -82,7 +82,7 @@ Claude가 형식(양식 파일이 있는지, 어떤 프리셋인지)을 묻고 �
 
 양식 자리에는 파일 대신 프리셋 이름(`rnd-report` 등)을 써도 됩니다. `--json`을 붙이면 기계가 읽는 JSON으로 출력합니다.
 
-쓰는 법 자세히: [보고서 마크다운](skills/hwpx-report/reference/markdown.md) · [수식](skills/hwpx-report/reference/equations.md) · [양식 채우기](skills/hwpx-report/reference/form.md) · [프리셋](skills/hwpx-report/reference/presets.md) · [문제 해결](skills/hwpx-report/reference/troubleshooting.md)
+쓰는 법 자세히: [보고서 마크다운](skills/hwp-helper/reference/markdown.md) · [수식](skills/hwp-helper/reference/equations.md) · [양식 채우기](skills/hwp-helper/reference/form.md) · [프리셋](skills/hwp-helper/reference/presets.md) · [문제 해결](skills/hwp-helper/reference/troubleshooting.md)
 
 ## 개발
 

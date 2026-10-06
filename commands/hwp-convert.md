@@ -3,7 +3,7 @@ description: 한글 파일 형식을 바꾸거나(.hwp↔.hwpx) 수식 크기를
 argument-hint: "[파일] [바꿀 형식 또는 '수식']"
 ---
 
-hwpx-report 스킬의 "5. 변환·수식 크기" 절차를 따른다.
+hwp-helper 스킬의 "5. 변환·수식 크기" 절차를 따른다.
 
 요청: $ARGUMENTS
 

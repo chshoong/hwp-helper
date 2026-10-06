@@ -3,7 +3,7 @@ description: 기관 양식(월간보고서·진도 보고 등)의 표 칸을 채
 argument-hint: "[양식 파일] [채울 내용이나 자료]"
 ---
 
-hwpx-report 스킬의 "3. 양식 채우기" 절차로 양식을 채운다.
+hwp-helper 스킬의 "3. 양식 채우기" 절차로 양식을 채운다.
 
 요청: $ARGUMENTS
 

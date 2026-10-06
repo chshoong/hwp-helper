@@ -1,6 +1,6 @@
-"""claude.ai 업로드용 스킬 zip: hwpx-report/{SKILL.md, reference/, hwpx.py, hwpxkit/, presets/}.
+"""claude.ai 업로드용 스킬 zip: hwp-helper/{SKILL.md, reference/, hwpx.py, hwpxkit/, presets/}.
 
-사용: python scripts/build_skill_zip.py  → dist/hwpx-report-skill.zip
+사용: python scripts/build_skill_zip.py  → dist/hwp-helper-skill.zip
 개인 문서(private/)·테스트·문서·개발 파일은 넣지 않는다.
 """
 import sys
@@ -8,11 +8,11 @@ import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-TOP = "hwpx-report"
+TOP = "hwp-helper"
 
 
 def _files():
-    skill = ROOT / "skills" / "hwpx-report"
+    skill = ROOT / "skills" / "hwp-helper"
     yield skill / "SKILL.md", "SKILL.md"
     for f in sorted((skill / "reference").glob("*.md")):
         yield f, f"reference/{f.name}"
@@ -39,6 +39,6 @@ def build(dst: Path) -> Path:
 
 
 if __name__ == "__main__":
-    out = build(ROOT / "dist" / "hwpx-report-skill.zip")
+    out = build(ROOT / "dist" / "hwp-helper-skill.zip")
     sys.stdout.reconfigure(encoding="utf-8")
     print(f"만들었어요: {out} ({out.stat().st_size // 1024} KB)")

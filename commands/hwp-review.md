@@ -3,7 +3,7 @@ description: 한글 문서를 검토한다 — 번호·참조·날짜·요일·�
 argument-hint: "[검토할 .hwpx/.hwp 파일]"
 ---
 
-hwpx-report 스킬의 "6. 검토 결과 읽기" 절차로 문서를 검토한다.
+hwp-helper 스킬의 "6. 검토 결과 읽기" 절차로 문서를 검토한다.
 
 대상: $ARGUMENTS
 
