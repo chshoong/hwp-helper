@@ -21,11 +21,11 @@ from .package import Package
 ROLE_KO = {
     "h1": "장 제목", "h2": "절 제목", "h3": "소절 제목", "h4": "항 제목", "h5": "목 제목",
     "body": "본문", "bullet1": "□ 글머리", "bullet2": "○ 글머리", "bullet3": "- 글머리", "bullet4": "· 글머리",
-    "caption_tbl": "표 제목", "caption_fig": "그림 제목", "blank": "빈 줄",
+    "caption_tbl": "표 제목", "caption_fig": "그림 제목", "note": "주석", "blank": "빈 줄",
 }
 _FALLBACK = {"h5": "h4", "h4": "h3", "h3": "h2", "h2": "h1", "h1": "body",
              "bullet4": "bullet3", "bullet3": "bullet2", "bullet2": "bullet1", "bullet1": "body",
-             "caption_fig": "caption_tbl", "caption_tbl": "body"}
+             "caption_fig": "caption_tbl", "caption_tbl": "body", "note": "body"}
 # 제목 번호 형식 (위가 더 큰 단계). 문서에 실제로 쓰인 형식만 골라 순서대로 h1, h2, … 를 준다.
 _HEADINGS = [
     ("jang", re.compile(r"^제\s*\d+\s*장")),
@@ -164,6 +164,8 @@ def classify(p: etree._Element, h: Header, chars: dict[str, str], levels: dict[s
         return f"bullet{BULLETS.get(chars.get(head.get('idRef'), ''), 4)}", st
     if text[0] in BULLETS and len(text) > 1 and text[1].isspace():
         return f"bullet{BULLETS[text[0]]}", st
+    if text[0] in "*※" and len(text) > 1 and text[1].isspace():
+        return "note", st
     for role, pat in _CAPTIONS:
         if pat.match(text):
             return role, st

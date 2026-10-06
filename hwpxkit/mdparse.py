@@ -69,10 +69,17 @@ class PageBreak:
     pass
 
 
-Block = Heading | Bullet | Para | Table | Figure | Math | PageBreak
+@dataclass
+class Note:
+    """'* 출처…', '※ 참고…' 주석 줄. spans에 기호까지 들어 있다."""
+    spans: list[Span]
+
+
+Block = Heading | Bullet | Para | Table | Figure | Math | PageBreak | Note
 
 _HEADING = re.compile(r"^(#{1,5})\s+(.*)$")
 _BULLET = re.compile(r"^([□○◦❍\-–·∙•])\s+(.*)$")
+_NOTE = re.compile(r"^([*※])\s+(.*)$")
 _FIGURE = re.compile(r"^!\[(.*?)\]\((.+?)\)\s*(\{.*\})?\s*$")
 _TABLE_CAPTION = re.compile(r"^표\s*[:：]\s*(.*?)\s*(\{.*\})?\s*$")
 _TABLE_SEP = re.compile(r"^\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?$")
@@ -211,6 +218,8 @@ def parse(md: str) -> list[Block]:
             blocks.append(Heading(len(m.group(1)), parse_inline(m.group(2).strip())))
         elif (m := _BULLET.match(line)):
             blocks.append(Bullet(BULLETS[m.group(1)], parse_inline(m.group(2).strip())))
+        elif (m := _NOTE.match(line)):
+            blocks.append(Note([Span("text", m.group(1) + " ")] + parse_inline(m.group(2).strip())))
         else:
             blocks.append(Para(parse_inline(line)))
         i += 1

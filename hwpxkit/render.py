@@ -19,7 +19,7 @@ from .eqsize import estimate
 from .equation import EquationError, latex_to_hwp
 from .header import Header
 from .layout import distribute, fit_image, page_geometry
-from .mdparse import BULLETS, Bullet, Figure, Heading, Math, PageBreak, Para, Span, Table, parse, parse_inline
+from .mdparse import BULLETS, Bullet, Figure, Heading, Math, Note, PageBreak, Para, Span, Table, parse, parse_inline
 from .ns import q
 from .package import Package
 from .samples import BODY_FROM, EQ_NUMBER, Catalog, ParaStyle
@@ -120,6 +120,8 @@ class Renderer:
             return self._bullet(b)
         if isinstance(b, Para):
             return self._para("body", b.spans)
+        if isinstance(b, Note):
+            return self._para("note", b.spans)
         if isinstance(b, PageBreak):
             self._page_break = True
             return []
@@ -487,6 +489,8 @@ def _missing_samples(blocks, catalog: Catalog) -> list[str]:
             need["그림"] = catalog.figure_para is not None
         elif isinstance(b, Math):
             need["수식"] = catalog.equation is not None
+        elif isinstance(b, Note):
+            need[ROLE_KO["note"]] = "note" in catalog.paras
     return [name for name, ok in need.items() if not ok]
 
 
