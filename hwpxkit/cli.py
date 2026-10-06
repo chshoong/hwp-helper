@@ -1,0 +1,376 @@
+"""명령줄 진입점: python -m hwpxkit <명령> ...
+
+스킬·명령 문서는 이 CLI만 호출한다. 기본 출력은 사람이 읽는 한국어, --json이면 기계용 JSON.
+종료 코드: 0 정상, 1 검증 오류 있음, 2 사용자 오류, 3 내부 오류(안내 메시지는 stderr).
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import shutil
+import sys
+import tempfile
+from collections import Counter
+from pathlib import Path
+
+from . import bridge, form
+from . import presets as presets_mod
+from . import review as review_mod
+from .header import Header
+from .layout import hu_to_mm, page_geometry
+from .ns import q
+from .package import Package, PackageError
+from .reader import to_markdown
+from .render import render_into
+from .samples import infer
+from .validate import autofix, validate
+
+
+def _resolve_template(arg: str) -> Path:
+    """양식 자리의 값: 있는 파일이면 그 파일, 아니면 프리셋 이름."""
+    path = Path(arg)
+    if path.is_file() or path.suffix.lower() in (".hwp", ".hwpx"):
+        return path
+    return presets_mod.path(arg)
+
+
+def _open_any(path: Path, workdir: Path) -> Package:
+    if not path.is_file():
+        raise PackageError(f"파일을 찾을 수 없어요: {path}")
+    if path.suffix.lower() == ".hwp":
+        if not bridge.available():
+            raise PackageError("구형 한글(.hwp) 파일은 한글이 설치된 PC에서만 바로 열 수 있어요. "
+                               "한글에서 '다른 이름으로 저장 → HWPX 문서'로 바꿔 주세요.")
+        path = bridge.convert(path, workdir / (path.stem + ".hwpx"))
+    return Package.open(path)
+
+
+def summarize(pkg: Package) -> dict:
+    h = Header(pkg)
+    geo = page_geometry(pkg)
+    sections = pkg.section_names()
+    counts = {"문단": 0, "표": 0, "그림": 0, "수식": 0}
+    runs = Counter()
+    for sec in sections:
+        root = pkg.xml(sec)
+        counts["문단"] += sum(1 for _ in root.iter(q("hp:p")))
+        counts["표"] += sum(1 for _ in root.iter(q("hp:tbl")))
+        counts["그림"] += sum(1 for _ in root.iter(q("hp:pic")))
+        counts["수식"] += sum(1 for _ in root.iter(q("hp:equation")))
+        runs.update(r.get("charPrIDRef") for r in root.iter(q("hp:run")))
+    fonts = Counter()
+    for cid, n in runs.items():
+        try:
+            fonts[h.charpr_faces(cid)["HANGUL"] or "(알 수 없음)"] += n
+        except KeyError:
+            fonts["(정의 안 됨)"] += n
+    return {
+        "구역": len(sections),
+        "쪽 크기(mm)": [round(hu_to_mm(geo.width)), round(hu_to_mm(geo.height))],
+        "본문 폭(mm)": round(hu_to_mm(geo.text_width), 1),
+        "개수": counts,
+        "글꼴": dict(fonts.most_common()),
+        "스타일": [e.get("name") for e in h.items("style")],
+    }
+
+
+def _print_summary(s: dict) -> None:
+    w, h = s["쪽 크기(mm)"]
+    print(f"쪽 크기: {w}×{h}mm, 본문 폭: {s['본문 폭(mm)']}mm, 구역 {s['구역']}개")
+    print("개수: " + ", ".join(f"{k} {v}" for k, v in s["개수"].items()))
+    print("글꼴(사용 횟수): " + ", ".join(f"{k} {v}" for k, v in s["글꼴"].items()))
+    print("스타일: " + ", ".join(s["스타일"]))
+
+
+def _cmd_inspect(args, workdir) -> int:
+    s = summarize(_open_any(Path(args.file), workdir))
+    if args.json:
+        print(json.dumps(s, ensure_ascii=False))
+    else:
+        _print_summary(s)
+    return 0
+
+
+def _cmd_validate(args, workdir) -> int:
+    issues = validate(_open_any(Path(args.file), workdir))
+    if args.json:
+        print(json.dumps([i.to_dict() for i in issues], ensure_ascii=False))
+    elif not issues:
+        print("문제 없음: 한글에서 열 때 깨질 만한 부분을 찾지 못했어요.")
+    else:
+        for i in issues:
+            mark = "오류" if i.level == "error" else "주의"
+            print(f"[{mark}] {i.message}")
+    return 1 if any(i.level == "error" for i in issues) else 0
+
+
+def _cmd_convert(args, workdir) -> int:
+    out = bridge.convert(Path(args.src), Path(args.dst))
+    print(f"저장했어요: {out}")
+    return 0
+
+
+def _cmd_preview(args, workdir) -> int:
+    files = bridge.page_images(Path(args.file), Path(args.outdir))
+    print(f"쪽 이미지 {len(files)}장을 만들었어요:")
+    for f in files:
+        print(f"  {f}")
+    return 0
+
+
+def _cmd_read(args, workdir) -> int:
+    print(to_markdown(_open_any(Path(args.file), workdir), anchors=args.anchors), end="")
+    return 0
+
+
+def _cmd_samples(args, workdir) -> int:
+    cat = infer(_open_any(_resolve_template(args.file), workdir))
+    if args.json:
+        data = {
+            "paras": {role: {"para_pr": st.para_pr, "style": st.style, "char_pr": st.char_pr,
+                             "auto_bullet": st.auto_bullet, "example": st.example, "spacer": st.spacer is not None}
+                      for role, st in cat.paras.items()},
+            "table": cat.table_para is not None, "figure": cat.figure_para is not None,
+            "tbl_label": cat.tbl_label, "fig_label": cat.fig_label, "notes": cat.notes,
+        }
+        print(json.dumps(data, ensure_ascii=False))
+    else:
+        print("\n".join(cat.describe()))
+    return 0
+
+
+def _parse_range(text: str) -> tuple[int, int]:
+    try:
+        a, b = text.split(":")
+        return int(a), int(b)
+    except ValueError:
+        raise ValueError(f"--replace는 '시작:끝' 형식이어야 해요 (예: 12:20). 받은 값: {text}") from None
+
+
+def _cmd_render(args, workdir) -> int:
+    template, out = _resolve_template(args.template), Path(args.out)
+    if out.resolve() == template.resolve():
+        raise PackageError("원본 파일을 덮어쓸 수 없어요. 다른 이름으로 저장해 주세요.")
+    if out.suffix.lower() not in (".hwpx", ".hwp"):
+        raise ValueError(f"결과 파일은 .hwpx 또는 .hwp여야 해요: {out.name}")
+    md_path = Path(args.md)
+    if not md_path.is_file():
+        raise PackageError(f"내용 파일을 찾을 수 없어요: {md_path}")
+    pkg = _open_any(template, workdir)
+    cat = infer(pkg)
+    warnings = render_into(pkg, cat, md_path.read_text(encoding="utf-8-sig"), mode=args.mode,
+                           replace=_parse_range(args.replace) if args.replace else None,
+                           base_dir=md_path.parent)
+    for w in warnings:
+        print(f"[주의] {w}")
+    return _save_checked(pkg, out, workdir, args.preview)
+
+
+def _save_checked(pkg: Package, out: Path, workdir: Path, preview) -> int:
+    """자동 수정 → 검증(오류면 저장 안 함) → 저장(.hwp면 변환) → 수식 크기 맞춤 → 미리보기."""
+    for f in autofix(pkg):
+        print(f"[자동 수정] {f}")
+    errors = [i for i in validate(pkg) if i.level == "error"]
+    if errors:
+        for i in errors:
+            print(f"[오류] {i.message}")
+        print("오류가 있어 저장하지 않았어요.")
+        return 1
+    hwpx = out if out.suffix.lower() == ".hwpx" else workdir / (out.stem + ".hwpx")
+    out.parent.mkdir(parents=True, exist_ok=True)
+    pkg.save(hwpx)
+    total = _count_equations(pkg)
+    if total and bridge.available():
+        _refresh_in_place(hwpx, workdir, total)
+    elif total:
+        print("[주의] 한글이 없어 수식 크기를 추정했어요. 한글이 있는 PC에서 "
+              f"'hwpx.py equations {out.name} 고친결과.hwpx'로 정확히 맞출 수 있어요.")
+    if hwpx != out:
+        bridge.convert(hwpx, out)
+    print(f"저장했어요: {out}")
+    if preview and not bridge.available():
+        print("[주의] 한글이 없어 쪽 미리보기는 만들지 못했어요. 파일은 저장했어요.")
+    elif preview:
+        files = bridge.page_images(hwpx, Path(preview))
+        print(f"쪽 이미지 {len(files)}장:")
+        for f in files:
+            print(f"  {f}")
+    return 0
+
+
+def _cmd_fields(args, workdir) -> int:
+    fields = form.list_fields(_open_any(_resolve_template(args.file), workdir))
+    if args.json:
+        print(json.dumps(fields, ensure_ascii=False))
+        return 0
+    table = None
+    for f in fields:
+        if f["table"] != table:
+            table = f["table"]
+            print(f"\n[표{table}]")
+        state = "내용 있음" if f["filled"] else "비어 있음"
+        preview = f["text"].replace("\n", " / ")[:40]
+        print(f"  {f['row']}행 {f['col']}열 ({state}) {preview}")
+        print(f"    {f['address']}")
+    return 0
+
+
+def _cmd_fill(args, workdir) -> int:
+    src, out = _resolve_template(args.file), Path(args.out)
+    if out.resolve() == src.resolve():
+        raise PackageError("원본 파일을 덮어쓸 수 없어요. 다른 이름으로 저장해 주세요.")
+    spec = Path(args.spec)
+    if not spec.is_file():
+        raise PackageError(f"지시문 파일을 찾을 수 없어요: {spec}")
+    pkg = _open_any(src, workdir)
+    warnings = form.fill(pkg, form.parse_fill(spec.read_text(encoding="utf-8-sig")), base_dir=spec.parent)
+    for w in warnings:
+        print(f"[주의] {w}")
+    return _save_checked(pkg, out, workdir, args.preview)
+
+
+def _count_equations(pkg: Package) -> int:
+    return sum(1 for sec in pkg.section_names() for _ in pkg.xml(sec).iter(q("hp:equation")))
+
+
+def _report_refreshed(n: int, total: int) -> None:
+    if n >= total:
+        print(f"수식 {n}개 크기를 한글로 맞췄어요.")
+    else:
+        print(f"[주의] 수식 {total}개 중 {n}개만 한글로 크기를 맞췄어요. 나머지는 머리말·각주 같은 곳에 있거나 "
+              "한글이 고치지 못한 것일 수 있어요. 한글에서 열어 확인해 주세요.")
+
+
+def _refresh_in_place(hwpx: Path, workdir: Path, total: int) -> None:
+    """render 결과의 수식 크기를 한글로 맞춘다. 실패해도 추정 크기 파일은 그대로 남기고 안내만 한다."""
+    fixed = workdir / "eq_fixed.hwpx"
+    try:
+        _, n = bridge.refresh_equations(hwpx, fixed)
+    except bridge.BridgeError as e:
+        print(f"[주의] 한글로 수식 크기를 맞추지 못해 추정 크기로 저장했어요 ({e})")
+        return
+    shutil.copyfile(fixed, hwpx)
+    _report_refreshed(n, total)
+
+
+def _cmd_equations(args, workdir) -> int:
+    total = _count_equations(_open_any(Path(args.src), workdir))
+    out, n = bridge.refresh_equations(Path(args.src), Path(args.dst))
+    _report_refreshed(n, total)
+    print(f"저장했어요: {out}")
+    return 0
+
+
+def _cmd_review(args, workdir) -> int:
+    findings = review_mod.review(_open_any(Path(args.file), workdir))
+    if args.json:
+        print(json.dumps([f.to_dict() for f in findings], ensure_ascii=False))
+    elif not findings:
+        print("확인할 것이 없어요.")
+    else:
+        for f in findings:
+            print(f"[{f.level}] {f.message}")
+    return 1 if any(f.level == "오류" for f in findings) else 0
+
+
+def _cmd_renumber(args, workdir) -> int:
+    src, out = Path(args.file), Path(args.out)
+    if out.resolve() == src.resolve():
+        raise PackageError("원본 파일을 덮어쓸 수 없어요. 다른 이름으로 저장해 주세요.")
+    pkg = _open_any(src, workdir)
+    changes = review_mod.renumber(pkg)
+    for c in changes:
+        print(f"  {c}")
+    print(f"번호 {len(changes)}곳을 고쳤어요." if changes else "고칠 번호가 없어요.")
+    return _save_checked(pkg, out, workdir, None)
+
+
+def _cmd_presets(args, workdir) -> int:
+    items = presets_mod.listing()
+    if args.json:
+        print(json.dumps(items, ensure_ascii=False))
+        return 0
+    for p in items:
+        print(f"{p['name']}: {p['title']} — {p['description']}")
+        for mark, meaning in p["levels"].items():
+            print(f"    {mark}  →  {meaning}")
+    return 0
+
+
+def _parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(prog="hwpxkit", description="HWPX 문서 도구")
+    sub = p.add_subparsers(dest="cmd", required=True)
+    s = sub.add_parser("inspect", help="문서 요약 (쪽 크기, 개수, 글꼴, 스타일)")
+    s.add_argument("file")
+    s.add_argument("--json", action="store_true")
+    s.set_defaults(func=_cmd_inspect)
+    s = sub.add_parser("validate", help="한글에서 깨질 만한 부분 검사")
+    s.add_argument("file")
+    s.add_argument("--json", action="store_true")
+    s.set_defaults(func=_cmd_validate)
+    s = sub.add_parser("convert", help="hwp/hwpx/pdf 변환 (한글 필요)")
+    s.add_argument("src")
+    s.add_argument("dst")
+    s.set_defaults(func=_cmd_convert)
+    s = sub.add_parser("preview", help="쪽 이미지(PNG) 만들기 (한글 필요)")
+    s.add_argument("file")
+    s.add_argument("outdir")
+    s.set_defaults(func=_cmd_preview)
+    s = sub.add_parser("read", help="문서를 보고서 마크다운으로 읽기")
+    s.add_argument("file")
+    s.add_argument("--anchors", action="store_true", help="문단 번호 표시 (부분 수정용)")
+    s.set_defaults(func=_cmd_read)
+    s = sub.add_parser("samples", help="양식에서 찾은 견본(역할별 서식) 보기")
+    s.add_argument("file")
+    s.add_argument("--json", action="store_true")
+    s.set_defaults(func=_cmd_samples)
+    s = sub.add_parser("render", help="보고서 마크다운을 양식 서식으로 넣어 새 파일 만들기")
+    s.add_argument("template")
+    s.add_argument("md")
+    s.add_argument("out")
+    s.add_argument("--mode", choices=["new", "append"], default="new")
+    s.add_argument("--replace", help="최상위 문단 범위 시작:끝 (read --anchors의 번호)")
+    s.add_argument("--preview", help="쪽 이미지를 만들 폴더 (한글 필요)")
+    s.set_defaults(func=_cmd_render)
+    s = sub.add_parser("equations", help="수식 크기를 한글로 다시 계산해 저장 (한글 필요)")
+    s.add_argument("src")
+    s.add_argument("dst")
+    s.set_defaults(func=_cmd_equations)
+    s = sub.add_parser("fields", help="양식의 표 칸 목록과 채우기 주소(@칸 …) 보기")
+    s.add_argument("file")
+    s.add_argument("--json", action="store_true")
+    s.set_defaults(func=_cmd_fields)
+    s = sub.add_parser("fill", help="지시문(@칸/@행수/@바꾸기)으로 양식 채우기")
+    s.add_argument("file")
+    s.add_argument("spec")
+    s.add_argument("out")
+    s.add_argument("--preview", help="쪽 이미지를 만들 폴더 (한글 필요)")
+    s.set_defaults(func=_cmd_fill)
+    s = sub.add_parser("review", help="날짜·요일·번호·참조·안내 문구·빈 칸·글꼴 검토")
+    s.add_argument("file")
+    s.add_argument("--json", action="store_true")
+    s.set_defaults(func=_cmd_review)
+    s = sub.add_parser("renumber", help="표·그림 번호를 다시 매기고 본문 참조도 고치기")
+    s.add_argument("file")
+    s.add_argument("out")
+    s.set_defaults(func=_cmd_renumber)
+    s = sub.add_parser("presets", help="양식 없이 쓸 수 있는 프리셋 목록")
+    s.add_argument("--json", action="store_true")
+    s.set_defaults(func=_cmd_presets)
+    return p
+
+
+def main(argv: list[str] | None = None) -> int:
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8")
+    args = _parser().parse_args(argv)
+    with tempfile.TemporaryDirectory(prefix="hwpxkit-") as tmp:
+        try:
+            return args.func(args, Path(tmp))
+        except (PackageError, bridge.BridgeError, ValueError) as e:
+            print(str(e), file=sys.stderr)
+            return 2
+        except Exception as e:  # 검증 실패(1)와 구분되도록 따로 알린다
+            print(f"내부 오류가 났어요 (문서 문제가 아닐 수 있어요): {type(e).__name__}: {e}", file=sys.stderr)
+            return 3

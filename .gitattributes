@@ -1,0 +1,3 @@
+*.hwpx binary
+*.hwp binary
+*.ps1 text eol=crlf

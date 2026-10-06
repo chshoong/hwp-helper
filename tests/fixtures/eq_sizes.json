@@ -1,0 +1,658 @@
+[
+ {
+  "latex": "x",
+  "script": "x",
+  "u": 1000,
+  "w": 600,
+  "h": 975,
+  "b": 86
+ },
+ {
+  "latex": "X",
+  "script": "X",
+  "u": 1000,
+  "w": 750,
+  "h": 975,
+  "b": 86
+ },
+ {
+  "latex": "k",
+  "script": "k",
+  "u": 1000,
+  "w": 525,
+  "h": 975,
+  "b": 86
+ },
+ {
+  "latex": "\\theta",
+  "script": "theta",
+  "u": 1000,
+  "w": 525,
+  "h": 975,
+  "b": 86
+ },
+ {
+  "latex": "\\Gamma",
+  "script": "GAMMA",
+  "u": 1000,
+  "w": 675,
+  "h": 975,
+  "b": 86
+ },
+ {
+  "latex": "12",
+  "script": "1 2",
+  "u": 1000,
+  "w": 1050,
+  "h": 975,
+  "b": 86
+ },
+ {
+  "latex": "3.14",
+  "script": "3 . 1 4",
+  "u": 1000,
+  "w": 1875,
+  "h": 975,
+  "b": 86
+ },
+ {
+  "latex": "ab",
+  "script": "a b",
+  "u": 1000,
+  "w": 975,
+  "h": 975,
+  "b": 86
+ },
+ {
+  "latex": "XYZ",
+  "script": "X Y Z",
+  "u": 1000,
+  "w": 2100,
+  "h": 975,
+  "b": 86
+ },
+ {
+  "latex": "\\alpha\\beta\\gamma",
+  "script": "alpha beta gamma",
+  "u": 1000,
+  "w": 1725,
+  "h": 975,
+  "b": 86
+ },
+ {
+  "latex": "x+y",
+  "script": "x + y",
+  "u": 1000,
+  "w": 2230,
+  "h": 975,
+  "b": 86
+ },
+ {
+  "latex": "a=b",
+  "script": "a = b",
+  "u": 1000,
+  "w": 2220,
+  "h": 975,
+  "b": 86
+ },
+ {
+  "latex": "a+b=c",
+  "script": "a + b = c",
+  "u": 1000,
+  "w": 3775,
+  "h": 975,
+  "b": 86
+ },
+ {
+  "latex": "x \\le y",
+  "script": "x leq y",
+  "u": 1000,
+  "w": 2595,
+  "h": 975,
+  "b": 86
+ },
+ {
+  "latex": "f(x)",
+  "script": "f ( x )",
+  "u": 1000,
+  "w": 2090,
+  "h": 975,
+  "b": 86
+ },
+ {
+  "latex": "f(x,y)",
+  "script": "f ( x , y )",
+  "u": 1000,
+  "w": 2985,
+  "h": 975,
+  "b": 86
+ },
+ {
+  "latex": "[a,b]",
+  "script": "[ a , b ]",
+  "u": 1000,
+  "w": 2015,
+  "h": 975,
+  "b": 86
+ },
+ {
+  "latex": "\\{a\\}",
+  "script": "lbrace a rbrace",
+  "u": 1000,
+  "w": 1795,
+  "h": 975,
+  "b": 86
+ },
+ {
+  "latex": "x_i",
+  "script": "x _{i}",
+  "u": 1000,
+  "w": 825,
+  "h": 1177,
+  "b": 72
+ },
+ {
+  "latex": "x^2",
+  "script": "x ^{2}",
+  "u": 1000,
+  "w": 975,
+  "h": 1163,
+  "b": 89
+ },
+ {
+  "latex": "x_i^2",
+  "script": "x _{i} ^{2}",
+  "u": 1000,
+  "w": 975,
+  "h": 1365,
+  "b": 76
+ },
+ {
+  "latex": "x_{ij}^{(k)}",
+  "script": "x _{i j} ^{( k )}",
+  "u": 1000,
+  "w": 1624,
+  "h": 1365,
+  "b": 76
+ },
+ {
+  "latex": "e^{-x^2}",
+  "script": "e ^{- x ^{2}}",
+  "u": 1000,
+  "w": 1823,
+  "h": 1309,
+  "b": 90
+ },
+ {
+  "latex": "\\hat{\\beta}",
+  "script": "{hat {beta}}",
+  "u": 1000,
+  "w": 600,
+  "h": 1170,
+  "b": 89
+ },
+ {
+  "latex": "\\bar{x}",
+  "script": "{bar {x}}",
+  "u": 1000,
+  "w": 705,
+  "h": 1170,
+  "b": 89
+ },
+ {
+  "latex": "\\tilde{y}_t",
+  "script": "{tilde {y}} _{t}",
+  "u": 1000,
+  "w": 825,
+  "h": 1372,
+  "b": 76
+ },
+ {
+  "latex": "\\vec{v}",
+  "script": "{vec {v}}",
+  "u": 1000,
+  "w": 555,
+  "h": 1170,
+  "b": 89
+ },
+ {
+  "latex": "\\frac{a}{b}",
+  "script": "{a} over {b}",
+  "u": 1000,
+  "w": 1025,
+  "h": 2250,
+  "b": 66
+ },
+ {
+  "latex": "\\frac{a+b}{c}",
+  "script": "{a + b} over {c}",
+  "u": 1000,
+  "w": 2580,
+  "h": 2250,
+  "b": 66
+ },
+ {
+  "latex": "\\frac{1}{2}\\sigma^2",
+  "script": "{1} over {2} sigma ^{2}",
+  "u": 1000,
+  "w": 1925,
+  "h": 2250,
+  "b": 66
+ },
+ {
+  "latex": "\\frac{\\partial f}{\\partial x}",
+  "script": "{partial f} over {partial x}",
+  "u": 1000,
+  "w": 1625,
+  "h": 2250,
+  "b": 66
+ },
+ {
+  "latex": "\\frac{\\frac{a}{b}}{c}",
+  "script": "{{a} over {b}} over {c}",
+  "u": 1000,
+  "w": 1525,
+  "h": 3525,
+  "b": 79
+ },
+ {
+  "latex": "\\sqrt{x}",
+  "script": "sqrt {x}",
+  "u": 1000,
+  "w": 1445,
+  "h": 1123,
+  "b": 88
+ },
+ {
+  "latex": "\\sqrt{x^2+y^2}",
+  "script": "sqrt {x ^{2} + y ^{2}}",
+  "u": 1000,
+  "w": 3885,
+  "h": 1308,
+  "b": 90
+ },
+ {
+  "latex": "\\sqrt[3]{x}",
+  "script": "root {3} of {x}",
+  "u": 1000,
+  "w": 1445,
+  "h": 1123,
+  "b": 88
+ },
+ {
+  "latex": "\\sum_{i=1}^{n} x_i",
+  "script": "sum _{i = 1} ^{n} x _{i}",
+  "u": 1000,
+  "w": 2305,
+  "h": 2700,
+  "b": 63
+ },
+ {
+  "latex": "\\sum_i x_i",
+  "script": "sum _{i} x _{i}",
+  "u": 1000,
+  "w": 2100,
+  "h": 2025,
+  "b": 51
+ },
+ {
+  "latex": "\\prod_{j} p_j",
+  "script": "prod _{j} p _{j}",
+  "u": 1000,
+  "w": 2175,
+  "h": 2025,
+  "b": 51
+ },
+ {
+  "latex": "\\int_0^1 f(x)\\,dx",
+  "script": "int _{0} ^{1} f ( x ) ` d x",
+  "u": 1000,
+  "w": 4900,
+  "h": 2586,
+  "b": 62
+ },
+ {
+  "latex": "\\lim_{n\\to\\infty} a_n",
+  "script": "lim _{n -> inf} a _{n}",
+  "u": 1000,
+  "w": 2925,
+  "h": 1875,
+  "b": 51
+ },
+ {
+  "latex": "\\max_{i} x_i",
+  "script": "max _{i} x _{i}",
+  "u": 1000,
+  "w": 3150,
+  "h": 1177,
+  "b": 72
+ },
+ {
+  "latex": "\\left( \\frac{a}{b} \\right)",
+  "script": "LEFT ( {a} over {b} RIGHT )",
+  "u": 1000,
+  "w": 1775,
+  "h": 2250,
+  "b": 66
+ },
+ {
+  "latex": "\\left[ x \\right]",
+  "script": "LEFT [ x RIGHT ]",
+  "u": 1000,
+  "w": 1650,
+  "h": 975,
+  "b": 86
+ },
+ {
+  "latex": "\\left| x \\right|",
+  "script": "LEFT | x RIGHT |",
+  "u": 1000,
+  "w": 1650,
+  "h": 975,
+  "b": 86
+ },
+ {
+  "latex": "\\begin{pmatrix} a & b \\\\ c & d \\end{pmatrix}",
+  "script": "pmatrix{a & b # c & d}",
+  "u": 1000,
+  "w": 2075,
+  "h": 2100,
+  "b": 67
+ },
+ {
+  "latex": "\\begin{bmatrix} 1 \\\\ 2 \\\\ 3 \\end{bmatrix}",
+  "script": "bmatrix{1 # 2 # 3}",
+  "u": 1000,
+  "w": 1575,
+  "h": 3225,
+  "b": 61
+ },
+ {
+  "latex": "\\begin{cases} x & x \\ge 0 \\\\ -x & x < 0 \\end{cases}",
+  "script": "cases{x & x geq 0 # - x & x < 0}",
+  "u": 1000,
+  "w": 4885,
+  "h": 2100,
+  "b": 67
+ },
+ {
+  "latex": "\\begin{aligned} a &= b \\\\ c &= d \\end{aligned}",
+  "script": "eqalign{a & = b # c & = d}",
+  "u": 1000,
+  "w": 2360,
+  "h": 2100,
+  "b": 41
+ },
+ {
+  "latex": "\\text{if } x > 0",
+  "script": "rm \"if \" it x > 0",
+  "u": 1000,
+  "w": 3320,
+  "h": 1000,
+  "b": 86
+ },
+ {
+  "latex": "\\operatorname{argmin}_{\\theta} L(\\theta)",
+  "script": "rm \"argmin\" it _{theta} L ( theta )",
+  "u": 1000,
+  "w": 5840,
+  "h": 1202,
+  "b": 71
+ },
+ {
+  "latex": "\\mathrm{Var}(X)",
+  "script": "rm {V a r} it ( X )",
+  "u": 1000,
+  "w": 3370,
+  "h": 1000,
+  "b": 86
+ },
+ {
+  "latex": "P(Y \\mid X)",
+  "script": "P ( Y vert X )",
+  "u": 1000,
+  "w": 3290,
+  "h": 975,
+  "b": 86
+ },
+ {
+  "latex": "E[Y|X] = \\beta_0 + \\beta_1 X",
+  "script": "E [ Y | X ] = beta _{0} + beta _{1} X",
+  "u": 1000,
+  "w": 8250,
+  "h": 1177,
+  "b": 72
+ },
+ {
+  "latex": "\\hat{\\beta} = (X^T X)^{-1} X^T y",
+  "script": "{hat {beta}} = ( X ^{T} X ) ^{- 1} X ^{T} y",
+  "u": 1000,
+  "w": 7803,
+  "h": 1170,
+  "b": 89
+ },
+ {
+  "latex": "f(y,z|x)=f(y|x)f(z|x)",
+  "script": "f ( y , z | x ) = f ( y | x ) f ( z | x )",
+  "u": 1000,
+  "w": 10510,
+  "h": 975,
+  "b": 86
+ },
+ {
+  "latex": "\\sum_{i=1}^{n} w_i (y_i - \\hat{y}_i)^2",
+  "script": "sum _{i = 1} ^{n} w _{i} ( y _{i} - {hat {y}} _{i} ) ^{2}",
+  "u": 1000,
+  "w": 6520,
+  "h": 2700,
+  "b": 63
+ },
+ {
+  "latex": "\\frac{1}{n}\\sum_{i=1}^{n} x_i",
+  "script": "{1} over {n} sum _{i = 1} ^{n} x _{i}",
+  "u": 1000,
+  "w": 3405,
+  "h": 2700,
+  "b": 63
+ },
+ {
+  "latex": "\\binom{n}{k} p^k (1-p)^{n-k}",
+  "script": "{n} choose {k} p ^{k} ( 1 - p ) ^{n - k}",
+  "u": 1000,
+  "w": 6946,
+  "h": 2100,
+  "b": 67
+ },
+ {
+  "latex": "\\rho_{YZ|X}",
+  "script": "rho _{Y Z | X}",
+  "u": 1000,
+  "w": 2175,
+  "h": 1177,
+  "b": 72
+ },
+ {
+  "latex": "a \\cdot b \\times c",
+  "script": "a cdot b times c",
+  "u": 1000,
+  "w": 3580,
+  "h": 975,
+  "b": 86
+ },
+ {
+  "latex": "x \\in A \\cup B",
+  "script": "x in A cup B",
+  "u": 1000,
+  "w": 4275,
+  "h": 975,
+  "b": 86
+ },
+ {
+  "latex": "\\alpha + \\beta = \\gamma",
+  "script": "alpha + beta = gamma",
+  "u": 1000,
+  "w": 4075,
+  "h": 975,
+  "b": 86
+ },
+ {
+  "latex": "\\hat{\\sigma}^2",
+  "script": "{hat {sigma}} ^{2}",
+  "u": 1000,
+  "w": 975,
+  "h": 1337,
+  "b": 90
+ },
+ {
+  "latex": "N(0,\\hat{\\sigma}^2)",
+  "script": "N ( 0 , {hat {sigma}} ^{2} )",
+  "u": 1000,
+  "w": 3615,
+  "h": 1337,
+  "b": 90
+ },
+ {
+  "latex": "\\hat{\\theta}^{(m)}",
+  "script": "{hat {theta}} ^{( m )}",
+  "u": 1000,
+  "w": 1849,
+  "h": 1337,
+  "b": 90
+ },
+ {
+  "latex": "\\bar{U}",
+  "script": "{bar {U}}",
+  "u": 1000,
+  "w": 855,
+  "h": 1170,
+  "b": 89
+ },
+ {
+  "latex": "\\hat{F}_{Z|X}^{-1}",
+  "script": "{hat {F}} _{Z | X} ^{- 1}",
+  "u": 1000,
+  "w": 1800,
+  "h": 1539,
+  "b": 78
+ },
+ {
+  "latex": "\\tilde{x}_i^2",
+  "script": "{tilde {x}} _{i} ^{2}",
+  "u": 1000,
+  "w": 975,
+  "h": 1539,
+  "b": 78
+ },
+ {
+  "latex": "a = b \\\\ c = d",
+  "script": "a = b # c = d",
+  "u": 1000,
+  "w": 2295,
+  "h": 2050,
+  "b": 41
+ },
+ {
+  "latex": "\\text{가중치} \\times \\text{평균점수}",
+  "script": "rm \"가중치\" it times rm \"평균점수\" it",
+  "u": 1000,
+  "w": 8315,
+  "h": 1000,
+  "b": 86
+ },
+ {
+  "latex": "x^{\\frac{a}{b}}",
+  "script": "x ^{{a} over {b}}",
+  "u": 1000,
+  "w": 1315,
+  "h": 2042,
+  "b": 94
+ },
+ {
+  "latex": "e^{-\\frac{(x-\\mu)^2}{2\\sigma^2}}",
+  "script": "e ^{- {( x - mu ) ^{2}} over {2 sigma ^{2}}}",
+  "u": 1000,
+  "w": 4058,
+  "h": 2268,
+  "b": 94
+ },
+ {
+  "latex": "x^{\\sum_{i=1}^n a_i}",
+  "script": "x ^{sum _{i = 1} ^{n} a _{i}}",
+  "u": 1000,
+  "w": 2071,
+  "h": 2288,
+  "b": 94
+ },
+ {
+  "latex": "A_{1/2}^{1/2}",
+  "script": "A _{1 / 2} ^{1 / 2}",
+  "u": 1000,
+  "w": 2100,
+  "h": 1365,
+  "b": 76
+ },
+ {
+  "latex": "\\binom{n}{k}^{1/2}",
+  "script": "{n} choose {k} ^{1 / 2}",
+  "u": 1000,
+  "w": 2400,
+  "h": 2288,
+  "b": 66
+ },
+ {
+  "latex": "x_{\\frac{1}{2}}",
+  "script": "x _{{1} over {2}}",
+  "u": 1000,
+  "w": 1315,
+  "h": 2041,
+  "b": 42
+ },
+ {
+  "latex": "\\frac{1}{n}\\sum_{i=1}^{n} \\hat{\\beta}_i^2",
+  "script": "{1} over {n} sum _{i = 1} ^{n} {hat {beta}} _{i} ^{2}",
+  "u": 1000,
+  "w": 3555,
+  "h": 2700,
+  "b": 63
+ },
+ {
+  "latex": "\\prod_{j=1}^{m} p_j^{x_j}",
+  "script": "prod _{j = 1} ^{m} p _{j} ^{x _{j}}",
+  "u": 1000,
+  "w": 2680,
+  "h": 2700,
+  "b": 63
+ },
+ {
+  "latex": "\\forall \\varepsilon > 0",
+  "script": "FORALL varepsilon > 0",
+  "u": 1000,
+  "w": 3420,
+  "h": 975,
+  "b": 86
+ },
+ {
+  "latex": "\\exists x \\in A",
+  "script": "exists x in A",
+  "u": 1000,
+  "w": 3525,
+  "h": 975,
+  "b": 86
+ },
+ {
+  "latex": "A^\\top \\Sigma^{-1} A",
+  "script": "A ^{top} SIGMA ^{- 1} A",
+  "u": 1000,
+  "w": 4598,
+  "h": 1163,
+  "b": 89
+ },
+ {
+  "latex": "\\bigcup_{i=1}^{n} A_i",
+  "script": "bigcup _{i = 1} ^{n} A _{i}",
+  "u": 1000,
+  "w": 2530,
+  "h": 2700,
+  "b": 63
+ }
+]
