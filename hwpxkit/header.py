@@ -83,6 +83,33 @@ class Header:
         cont.set("itemCnt", str(len(cont.findall(q(KINDS[kind][1])))))
         return new_id
 
+    def font_ids(self, face: str) -> dict[str, str]:
+        """face를 7개 언어 fontface에 등록하고 언어별 id를 돌려준다 (이미 있으면 그 id)."""
+        root = self.pkg.edit(HEADER)
+        ids = {}
+        for ff in root.iter(q("hh:fontface")):
+            fonts = ff.findall(q("hh:font"))
+            found = next((f for f in fonts if f.get("face") == face), None)
+            if found is None:
+                found = copy.deepcopy(fonts[0])
+                found.set("id", str(max(int(f.get("id")) for f in fonts) + 1))
+                found.set("face", face)
+                ff.append(found)
+                ff.set("fontCnt", str(len(fonts) + 1))
+            ids[ff.get("lang")] = found.get("id")
+        return ids
+
+    def derive_font(self, charpr_id, face: str) -> str:
+        """글자 모양을 복제해 모든 언어 글꼴을 face로 바꾼다."""
+        ids = self.font_ids(face)
+
+        def mutate(e):
+            ref = e.find(q("hh:fontRef"))
+            for lang, fid in ids.items():
+                ref.set(lang.lower(), fid)
+
+        return self.derive("charPr", charpr_id, mutate)
+
     def derive_charpr(self, base_id, *, bold=None, italic=None, color=None, height=None) -> str:
         def mutate(e):
             if color is not None:

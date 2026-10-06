@@ -179,7 +179,7 @@ def _cell(border_fill: str, para_pr: str, style: str, char_pr: str, row_h: int) 
     return tc
 
 
-def new_table_para(h: Header, body, width: int, row_h: int = 1500, *, tidy: bool = True):
+def new_table_para(h: Header, body, width: int, row_h: int = 1500, *, tidy: bool = True, face: str | None = None):
     """행이 없는 실선 표를 담은 문단과, 머리행·본문행 칸 견본을 돌려준다.
     tidy: 데이터 표 모양(머리 행 음영·굵게, 칸 가운데 정렬·들여쓰기 없음, 10pt 이하)."""
     bf = solid_border_fill(h)
@@ -206,6 +206,8 @@ def new_table_para(h: Header, body, width: int, row_h: int = 1500, *, tidy: bool
     pp = cell_para_pr(h, body.para_pr)
     size = min(int(h.get("charPr", body.char_pr).get("height", 1000)), 1000)
     char = h.derive_charpr(body.char_pr, height=size)
+    if face:
+        char = h.derive_font(char, face)
     head = _cell(shaded_border_fill(h), pp, body.style, h.derive_charpr(char, bold=True), row_h)
     cell = _cell(bf, pp, body.style, char, row_h)
     return p, tbl, head, cell

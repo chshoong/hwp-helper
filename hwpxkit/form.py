@@ -292,7 +292,7 @@ def fill_cell(pkg: Package, cell: Cell, content: str, *, base_dir: Path = Path("
     for name in pkg.section_names():
         pkg.edit(name)
     cat = cell_catalog(pkg, cell)
-    renderer = Renderer(pkg, cat, base_dir=base_dir)
+    renderer = Renderer(pkg, cat, base_dir=base_dir, keep_headings=False)
     elements = renderer.build(blocks)
     if not elements:  # 빈 내용: 본문 견본 모양의 빈 문단 하나
         st = cat.require("body")

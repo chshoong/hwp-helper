@@ -48,6 +48,9 @@ _TOC_DOTS = re.compile(r"(\.{3,}|·{3,}|…|‥)\s*\d+\s*$")
 EQ_NUMBER = re.compile(r"^\(\s*\d+(?:[-.]\d+)?\s*\)$")
 
 
+# 글로 쓴 글머리·주석의 앞부분: 들여쓰기 공백 + 기호 + 뒤 공백 (양식이 공백으로 단계를 들여쓰는 경우가 많다)
+_LEAD = re.compile(r"^(\s*)([□○◦❍\-–·∙•*※])(\s+)")
+
 # 본문 견본이 없을 때 글머리만 빼고 본문으로 쓸 글머리 (개조식 양식은 ○가 보통 본문 글)
 BODY_FROM = ("bullet2", "bullet1", "bullet3", "bullet4")
 
@@ -64,6 +67,7 @@ class ParaStyle:
     auto_bullet: bool = False
     spacer: "ParaStyle | None" = field(default=None, compare=False)
     example: str = field(default="", compare=False)
+    lead: str = field(default="", compare=False)  # 글로 쓴 글머리·주석의 앞부분 그대로 (예: '   - ', 공백 들여쓰기 포함)
 
 
 @dataclass
@@ -246,6 +250,7 @@ def learn(paragraphs, h: Header, chars: dict[str, str]):
     counts: dict[str, Counter] = defaultdict(Counter)
     before: dict[str, Counter] = defaultdict(Counter)
     examples: dict = {}
+    leads: dict = {}
     last: dict = {}
     captions: list[tuple[str, str]] = []
     prev = None
@@ -255,6 +260,9 @@ def learn(paragraphs, h: Header, chars: dict[str, str]):
             counts[role][st] += 1
             last[(role, st)] = idx
             examples.setdefault((role, st), own_text(p).strip()[:30])
+            m = _LEAD.match(own_text(p))
+            if m and (role == "note" or role.startswith("bullet")) and not st.auto_bullet:
+                leads.setdefault((role, st), m.group(0))
             if prev is not None:  # 맨 앞 문단은 앞에 빈 줄이 있을 수 없으니 간격 셈에서 뺀다
                 before[role][style_of(prev, h) if is_blank(prev) else None] += 1
             if role.startswith("caption"):
@@ -270,7 +278,7 @@ def learn(paragraphs, h: Header, chars: dict[str, str]):
         total = sum(c.values())
         spacer = (before[role].most_common(1)[0][0]
                   if role not in ("body", "blank") and before[role] else None)
-        paras[role] = replace(st, spacer=spacer, example=examples[(role, st)])
+        paras[role] = replace(st, spacer=spacer, example=examples[(role, st)], lead=leads.get((role, st), ""))
         if len(c) > 1 and n < 0.8 * total:
             notes.append(f"{ROLE_KO[role]}: 서식이 {len(c)}가지 섞여 있어 가장 많이 쓴 것({n}/{total})을 골랐어요.")
     return paras, notes, captions

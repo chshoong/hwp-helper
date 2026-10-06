@@ -6,8 +6,10 @@ from __future__ import annotations
 
 import copy
 import io
+import re
 import unicodedata
 from collections import Counter
+from dataclasses import replace
 from pathlib import Path
 
 from lxml import etree
@@ -25,6 +27,10 @@ from .package import Package
 from .samples import BODY_FROM, EQ_NUMBER, Catalog, ParaStyle
 
 _SYMBOL = {1: "□", 2: "○", 3: "-", 4: "·"}
+_LEAD_RE = re.compile(r"^(\s*)(\S)(\s+)$")
+# '다음 문단과 함께'를 켤 역할: 장·절 제목, 그리고 □ (개조식 양식에서는 □가 장 제목 노릇을 한다)
+_GOTHIC = ("맑은 고딕", "함초롬돋움", "한양중고딕", "나눔고딕", "돋움", "굴림")
+_KEEP_WITH_NEXT = {"h1", "h2", "h3", "h4", "h5", "bullet1"}
 
 
 class RenderError(ValueError):
@@ -33,8 +39,9 @@ class RenderError(ValueError):
 
 class Renderer:
     def __init__(self, pkg: Package, catalog: Catalog, *, base_dir: Path = Path("."),
-                 start: dict[str, int] | None = None):
+                 start: dict[str, int] | None = None, keep_headings: bool = True):
         self.pkg = pkg
+        self._keep_headings = keep_headings  # 표 칸 안(양식 채우기)에서는 쪽 나눔 설정이 의미 없다
         self._start = start or {}  # 넣을 자리 앞에 이미 있는 캡션 수 {"tbl": n, "fig": n}
         self.h = Header(pkg)
         self.cat = self._with_body(catalog)
@@ -47,6 +54,8 @@ class Renderer:
         self._counts: dict[int, int] = {}
         self._page_break = False
         self._last_blank = True
+        self._last_role: str | None = None
+        self._keep_cache: dict[str, str] = {}
         self.equation_count = 0
 
     @property
@@ -121,7 +130,7 @@ class Renderer:
         if isinstance(b, Para):
             return self._para("body", b.spans)
         if isinstance(b, Note):
-            return self._para("note", b.spans)
+            return self._note(b)
         if isinstance(b, PageBreak):
             self._page_break = True
             return []
@@ -139,18 +148,40 @@ class Renderer:
         spans = list(b.spans)
         if not st.auto_bullet:
             exact = role in self.cat.paras and st.example[:1] in BULLETS
-            sym = st.example[0] if exact else _SYMBOL[b.level]
-            spans = [Span("text", sym + " ")] + spans
+            if exact and st.lead:
+                spans = [Span("text", st.lead)] + spans  # 양식의 들여쓰기 공백·기호 그대로
+            else:
+                sym = st.example[0] if exact else _SYMBOL[b.level]
+                spans = [Span("text", sym + " ")] + spans
         return self._para(role, spans, style=st)
+
+    def _note(self, b: Note) -> list[etree._Element]:
+        st = self.cat.require("note")
+        spans = list(b.spans)
+        m = _LEAD_RE.match(st.lead) if "note" in self.cat.paras else None
+        if m:  # 양식 주석의 들여쓰기·간격에 사용자가 쓴 기호(* 또는 ※)
+            spans[0] = Span("text", m.group(1) + spans[0].text.strip() + m.group(3))
+        return self._para("note", spans, style=st)
 
     def _para(self, role: str, spans, style: ParaStyle | None = None) -> list[etree._Element]:
         st = style or self.cat.require(role)
         out = []
-        if st.spacer is not None and not self._last_blank:
+        # 양식에서 이 역할 앞에 빈 줄이 있으면, 묶음이 바뀔 때만 넣는다 (같은 단계가 이어지면 넣지 않음)
+        if st.spacer is not None and not self._last_blank and self._last_role != role:
             out.append(self._make_p(st.spacer, []))
+        if role in _KEEP_WITH_NEXT and self._keep_headings:
+            st = replace(st, para_pr=self._keep_with_next(st.para_pr))
         out.append(self._make_p(st, spans))
         self._last_blank = False
+        self._last_role = role
         return out
+
+    def _keep_with_next(self, para_pr: str) -> str:
+        """제목이 쪽 끝에 홀로 남지 않게 '다음 문단과 함께'를 켠 문단 모양."""
+        if para_pr not in self._keep_cache:
+            self._keep_cache[para_pr] = self.h.derive(
+                "paraPr", para_pr, lambda e: e.find(q("hh:breakSetting")).set("keepWithNext", "1"))
+        return self._keep_cache[para_pr]
 
     def _make_p(self, st: ParaStyle, spans) -> etree._Element:
         p = etree.Element(q("hp:p"), {"id": "0", "paraPrIDRef": st.para_pr, "styleIDRef": st.style,
@@ -256,6 +287,11 @@ class Renderer:
                 return ParaStyle(e.get("paraPrIDRef"), sid, e.get("charPrIDRef"))
         return self.cat.require("body")
 
+    def _table_face(self) -> str:
+        """기본 표 글꼴: 양식에 이미 있는 고딕 계열, 없으면 한글에 늘 있는 함초롬돋움."""
+        faces = set(self.h.fonts("HANGUL").values())
+        return next((f for f in _GOTHIC if f in faces), "함초롬돋움")
+
     def _table(self, b: Table) -> list[etree._Element]:
         caption = self._caption("tbl", b) if (b.caption or b.label) else None
         try:
@@ -264,6 +300,7 @@ class Renderer:
             raise RenderError(f"{b.lineno}번째 줄 표: {e}") from None
         self._take_page_break(tp)
         self._last_blank = False
+        self._last_role = None
         return [tp]
 
     def _table_para(self, b: Table, caption) -> etree._Element:
@@ -288,7 +325,8 @@ class Renderer:
                 tbl.remove(tr)
             _clean_object_para(p, tbl)
         else:
-            p, tbl, head_tc, body_tc = shapes.new_table_para(self.h, self._table_text_style(), self.geo.text_width)
+            p, tbl, head_tc, body_tc = shapes.new_table_para(self.h, self._table_text_style(), self.geo.text_width,
+                                                             face=self._table_face())
         total = int(tbl.find(q("hp:sz")).get("width"))
         cap = tbl.find(q("hp:caption"))
         if cap is not None:
@@ -348,6 +386,7 @@ class Renderer:
         self._take_page_break(p)
         self.ids.refresh(p)
         self._last_blank = False
+        self._last_role = None
         return [p]
 
     def _figure(self, b: Figure) -> list[etree._Element]:
@@ -396,6 +435,7 @@ class Renderer:
         self._take_page_break(p)
         self.ids.refresh(p)
         self._last_blank = False
+        self._last_role = None
         return [p]
 
 

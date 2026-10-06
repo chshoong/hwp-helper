@@ -26,6 +26,21 @@ MD = f"""# 제1장 서론
 """
 
 
+def same_but_keep(pkg, got, sample):
+    """제목 문단 모양은 견본과 같고 '다음 문단과 함께'만 켜져 있어야 한다."""
+    import copy
+    from lxml import etree
+    from hwpxkit.header import Header
+    h = Header(pkg)
+    a, b = copy.deepcopy(h.get("paraPr", got)), copy.deepcopy(h.get("paraPr", sample))
+    if a.find(q("hh:breakSetting")).get("keepWithNext") != "1":
+        return False
+    for e in (a, b):
+        e.set("id", "0")
+        e.find(q("hh:breakSetting")).set("keepWithNext", "1")
+    return etree.tostring(a) == etree.tostring(b)
+
+
 @pytest.fixture
 def tpl(blank):
     pkg = Package.open(blank)
@@ -44,7 +59,7 @@ def test_new_mode_keeps_section_controls_and_merges_first_block(tpl):
     first = ps[0]
     assert first.find(f".//{q('hp:secPr')}") is not None
     assert own_text(first) == "제1장 서론"
-    assert first.get("paraPrIDRef") == cat.paras["h1"].para_pr
+    assert same_but_keep(pkg, first.get("paraPrIDRef"), cat.paras["h1"].para_pr)
     assert "견본 표" not in "".join(own_text(p) for p in ps)
 
 
@@ -53,7 +68,7 @@ def test_styles_come_from_catalog(tpl):
     render_into(pkg, cat, MD)
     by_text = {own_text(p): p for p in tops(pkg)}
     h2 = by_text["1.1. 배경"]
-    assert h2.get("paraPrIDRef") == cat.paras["h2"].para_pr
+    assert same_but_keep(pkg, h2.get("paraPrIDRef"), cat.paras["h2"].para_pr)
     assert h2.find(q("hp:run")).get("charPrIDRef") == ids["h2"]
     assert "□ 첫 글머리" in by_text
     assert by_text[LONG].get("paraPrIDRef") == cat.paras["body"].para_pr

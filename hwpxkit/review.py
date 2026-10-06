@@ -228,6 +228,17 @@ def _check_cells(pkg: Package) -> list[Finding]:
                 for c in column:
                     if not c.text.strip():
                         out.append(Finding("확인", "empty-cell", f"{c.label()}: 비어 있어요."))
+        # 표지·신청서처럼 '항목 | 값' 두 열 표: 같은 열에 채운 칸이 없어도 빈 값 칸을 알린다
+        tcells = [c for c in all_cells if c.table == table]
+        if max(c.col + c.colspan for c in tcells) == 2:
+            labels = {c.row: c.text.strip() for c in tcells if c.col == 0}
+            reported = {f.message for f in out}
+            for c in tcells:
+                if (c.col == 1 and c.row > 0 and not c.text.strip()
+                        and 0 < len(labels.get(c.row, "")) <= 15):
+                    f = Finding("확인", "empty-cell", f"{c.label()}: 비어 있어요.")
+                    if f.message not in reported:
+                        out.append(f)
     return out
 
 
@@ -235,9 +246,14 @@ def _check_fonts(pkg: Package) -> list[Finding]:
     h = Header(pkg)
     usage: Counter = Counter()
     sample: dict = {}
-    for p in _tops(pkg):
+    tops = _tops(pkg)
+    chars, levels = bullet_chars(h), heading_levels(tops)
+    for p in tops:
         if next(p.iter(q("hp:tbl")), None) is not None:
             continue
+        role, _ = classify(p, h, chars, levels)
+        if role and (role.startswith("h") or role == "bullet1"):
+            continue  # 제목은 일부러 다른 글꼴(HY헤드라인M 등)을 쓰는 양식이 많다
         for run in p.findall(q("hp:run")):
             text = "".join(t.text or "" for t in run.findall(q("hp:t"))).strip()
             if not text:
@@ -301,10 +317,26 @@ def renumber(pkg: Package) -> list[str]:
     return changes
 
 
+_GUIDE_RE = re.compile(r"작성\s*후\s*삭제|작성\s*요령|자유롭게\s*(작성|기술)|작성하시오|기재하시오|기술하시오"
+                       r"|작성해\s*주(세요|십시오)|입력하(세요|십시오)|^\(?\s*예\s*시\s*\)?$")
+
+
+def _check_guide_text(pkg: Package) -> list[Finding]:
+    """양식의 안내·예시 문구(작성 후 삭제, 작성 요령, 자유롭게 작성 가능, '예 시')가 남아 있는지."""
+    out, seen = [], set()
+    for sec in pkg.section_names():
+        for p in pkg.xml(sec).iter(q("hp:p")):
+            text = " ".join(own_text(p).split())
+            if text and text not in seen and _GUIDE_RE.search(text):
+                seen.add(text)
+                out.append(Finding("확인", "guide-text", f"양식 안내 문구가 남아 있어요: '{text[:40]}'"))
+    return out
+
+
 def review(pkg: Package) -> list[Finding]:
     texts = _texts(pkg)
     period = _period(texts)
     notes = [Finding("확인", "mixed-format", n) for n in infer(pkg).notes
              if "섞여" in n and not n.startswith("빈 줄")]  # 빈 줄 서식 차이는 눈에 보이지 않음
     return (_check_dates(texts, period) + _check_month_headers(pkg, period) + _check_numbering(pkg)
-            + _check_cells(pkg) + _check_fonts(pkg) + notes)
+            + _check_cells(pkg) + _check_fonts(pkg) + _check_guide_text(pkg) + notes)
