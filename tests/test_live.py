@@ -159,3 +159,55 @@ def test_live_review_places_memo(live_doc, tmp_path):
     pkg = Package.open(live.export(tmp_path / "memo.hwpx", doc=name))
     memos = [fb for fb in pkg.xml(pkg.section_names()[0]).iter(q("hp:fieldBegin")) if fb.get("type") == "MEMO"]
     assert any("요일" in "".join(t.text or "" for t in fb.iter(q("hp:t"))) for fb in memos)
+
+
+def make_report(blank, tmp_path):
+    from helpers import LONG, append_to_body, para
+    from hwpxkit.header import Header
+    from hwpxkit.package import Package
+    pkg = Package.open(blank)
+    big = Header(pkg).derive_charpr("0", height=1600, bold=True)
+    for text, cp in (("제1장 서론", big), (LONG, "0"), ("제2장 방법", big), (LONG, "0"), (LONG, "0"),
+                     ("제3장 결과", big), (LONG, "0")):
+        append_to_body(pkg, para(text, char_pr=cp))
+    return pkg.save(tmp_path / "r.hwpx")
+
+
+def test_section_bounds_to_next_same_level(blank, tmp_path):
+    start, n1, end, n2 = live.section_bounds(make_report(blank, tmp_path), "제2장")
+    assert (start, n1, end, n2) == ("제2장 방법", 1, "제3장 결과", 1)
+
+
+def test_section_bounds_last_chapter_runs_to_end(blank, tmp_path):
+    assert live.section_bounds(make_report(blank, tmp_path), "제3장")[2] is None
+
+
+def test_section_skips_toc_line(blank, tmp_path):
+    """차례에 '제2장 방법 ···· 3'이 먼저 나와도 본문 제목을 고르고, 찾기 순번은 2번째 등장."""
+    from helpers import append_to_body, para
+    from hwpxkit.package import Package
+    path = make_report(blank, tmp_path)
+    pkg = Package.open(path)
+    sec = pkg.edit(pkg.section_names()[0])
+    toc = para("제2장 방법 ········ 3")
+    sec.insert(1, toc)
+    path2 = pkg.save(tmp_path / "toc.hwpx")
+    start, n1, end, n2 = live.section_bounds(path2, "제2장")
+    assert (start, n1) == ("제2장 방법", 2)
+
+
+def test_section_unknown_heading(blank, tmp_path):
+    with pytest.raises(live.LiveError, match="제목을 찾지 못했어요"):
+        live.section_bounds(make_report(blank, tmp_path), "제9장")
+
+
+@pytest.mark.hangul
+def test_live_section_rewrite(live_doc, tmp_path):
+    from hwpxkit.package import Package
+    from hwpxkit.reader import to_markdown
+    name, _ = live_doc
+    before = to_markdown(Package.open(live.export(tmp_path / "b.hwpx", doc=name)))
+    first = next(ln for ln in before.splitlines() if ln.startswith("# "))[2:]
+    live.section(first.split()[0], f"# {first}\n\n□ 새로 쓴 장 내용\n○ 세부\n", doc=name)
+    after = to_markdown(Package.open(live.export(tmp_path / "a.hwpx", doc=name)))
+    assert "새로 쓴 장 내용" in after and after.count(first) == 1

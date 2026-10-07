@@ -109,6 +109,23 @@ try {
       $null = $h.HAction.Run("Cancel"); $null = $h.SetPosBySet($saved)
       Emit @{ ok = $true; placed = $placed; missed = $missed }
     }
+    "replace_between" {
+      $null = $h.MovePos(2, 0, 0)
+      if (-not (Find-Text $a.start $a.start_n)) { Emit @{ ok = $false; error = "start_not_found" }; break }
+      $null = $h.HAction.Run("Cancel"); $null = $h.HAction.Run("MoveParaBegin"); $s = $h.GetPosBySet()
+      if ($a.end) {
+        $null = $h.MovePos(2, 0, 0)
+        if (-not (Find-Text $a.end $a.end_n)) { Emit @{ ok = $false; error = "end_not_found" }; break }
+        $null = $h.HAction.Run("Cancel"); $null = $h.HAction.Run("MoveParaBegin"); $e = $h.GetPosBySet()
+      } else { $null = $h.MovePos(3, 0, 0); $e = $h.GetPosBySet() }
+      $null = $h.SelectText([int]$s.Item("Para"), 0, [int]$e.Item("Para"), [int]$e.Item("Pos"))
+      $null = $h.HAction.Run("Delete")
+      $set = $h.HParameterSet.HInsertFile
+      $null = $h.HAction.GetDefault("InsertFile", $set.HSet)
+      $set.FileName = $a.file; $set.FileFormat = "HWPX"
+      $set.KeepSection = 0; $set.KeepCharshape = 1; $set.KeepParashape = 1; $set.KeepStyle = 1
+      Emit @{ ok = [bool]$h.HAction.Execute("InsertFile", $set.HSet) }
+    }
     default { Emit @{ ok = $false; error = "unknown_action" } }
   }
 } catch { Emit @{ ok = $false; error = $_.Exception.Message } }

@@ -21,6 +21,8 @@ _ERRORS = {
     "not_running": "한글에서 문서를 연 뒤 다시 말씀해 주세요.",
     "no_selection": "한글에서 고칠 부분을 드래그해 주세요.",
     "unknown_action": "내부 오류: 알 수 없는 한글 작업이에요.",
+    "start_not_found": "한글 화면에서 그 제목을 찾지 못했어요. 문서가 바뀌었으면 다시 말씀해 주세요.",
+    "end_not_found": "한글 화면에서 다음 제목을 찾지 못했어요. 문서가 바뀌었으면 다시 말씀해 주세요.",
 }
 
 
@@ -172,3 +174,43 @@ def review(doc: str | None = None, memo: bool = False) -> dict:
         return {"findings": findings, "placed": 0, "missed": []}
     r = call("memos", doc=doc, memos=memos)
     return {"findings": findings, "placed": int(r["placed"]), "missed": list(r.get("missed") or [])}
+
+
+from .body import own_text  # noqa: E402
+from .header import Header  # noqa: E402
+from .samples import bullet_chars, classify, heading_levels  # noqa: E402
+
+
+def section_bounds(screen: Path, heading: str) -> tuple[str, int, str | None, int]:
+    """heading으로 시작하는 본문 제목부터 같은 단계의 다음 제목 앞까지. 한글 찾기용으로 (글, 등장 순번)을 돌려준다."""
+    pkg = Package.open(screen)
+    h = Header(pkg)
+    chars = bullet_chars(h)
+    tops = [p for p in pkg.xml(pkg.section_names()[0]) if p.tag.endswith("}p")]
+    levels = heading_levels(tops)
+    roles = [classify(p, h, chars, levels)[0] for p in tops]
+    texts = [own_text(p).strip() for p in tops]
+    start = next((i for i, (t, r) in enumerate(zip(texts, roles))
+                  if t.startswith(heading) and r and (r.startswith("h") or r == "bullet1")), None)
+    if start is None:
+        raise LiveError(f"'{heading}' 제목을 찾지 못했어요. 한글 화면의 제목 글자 그대로 알려 주세요.")
+    role = roles[start]
+    end = next((i for i in range(start + 1, len(tops)) if roles[i] == role), None)
+
+    def occurrence(i: int) -> int:  # 한글 찾기는 문서 앞에서부터 같은 글을 센다(차례 줄 포함)
+        return sum(1 for t in texts[:i + 1] if texts[i] in t)
+
+    return (texts[start], occurrence(start),
+            texts[end] if end is not None else None, occurrence(end) if end is not None else 0)
+
+
+def section(heading: str, md: str, doc: str | None = None, base_dir: Path = Path(".")) -> dict:
+    with tempfile.TemporaryDirectory(prefix="hl") as tmp:
+        screen = export(Path(tmp) / "screen.hwpx", doc)
+        start, n1, end, n2 = section_bounds(screen, heading)
+        tops_before = next(i for i, p in enumerate(
+            [p for p in Package.open(screen).xml(Package.open(screen).section_names()[0]) if p.tag.endswith("}p")])
+            if own_text(p).strip() == start)
+        frag = fragment(md, screen, base_dir=base_dir, before_para=tops_before)
+        call("replace_between", doc=doc, start=start, start_n=n1, end=end or "", end_n=n2, file=str(frag))
+    return {"start": start, "end": end, "warnings": list(last_warnings)}
