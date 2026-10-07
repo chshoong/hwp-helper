@@ -181,15 +181,35 @@ class Renderer:
     def _para(self, role: str, spans, style: ParaStyle | None = None) -> list[etree._Element]:
         st = style or self.cat.require(role)
         out = []
-        # 양식에서 이 역할 앞에 빈 줄이 있으면, 묶음이 바뀔 때만 넣는다 (같은 단계가 이어지면 넣지 않음)
-        if st.spacer is not None and not self._last_blank and self._last_role != role:
-            out.append(self._make_p(st.spacer, []))
+        spacer = self._spacer_for(role, st)
+        if spacer is not None and not self._last_blank:
+            out.append(self._make_p(spacer, []))
         if (role in _KEEP_WITH_NEXT or self._keep_this) and self._keep_headings:
             st = replace(st, para_pr=self._keep_with_next(st.para_pr))
         out.append(self._make_p(st, spans))
         self._last_blank = False
         self._last_role = role
         return out
+
+    def _spacer_for(self, role: str, st: ParaStyle) -> ParaStyle | None:
+        """이 문단 앞에 넣을 빈 줄 (없으면 None).
+
+        ○·-·· 글머리(2~4단계): 묶음 사이에만 — 바로 앞이 더 깊은 글머리였을 때(새 묶음 시작).
+        위 단계에서 아래 단계로 내려갈 때는 붙인다. 빈 줄 서식은 이 단계나 더 깊은 단계 견본의 빈 줄.
+        그 밖(□·제목·본문 등): 양식에서 이 역할 앞에 빈 줄이 있으면, 역할이 바뀔 때만.
+        """
+        level = int(role[-1]) if role.startswith("bullet") else 0
+        if level >= 2:
+            prev = self._last_role or ""
+            prev_level = int(prev[-1]) if prev.startswith("bullet") else 0
+            if prev_level <= level:
+                return None
+            for r in [role] + [f"bullet{n}" for n in range(level + 1, 5)]:
+                cand = st if r == role else self.cat.paras.get(r)
+                if cand is not None and cand.spacer is not None:
+                    return cand.spacer
+            return self.cat.bullet_spacer
+        return st.spacer if st.spacer is not None and self._last_role != role else None
 
     def _keep_with_next(self, para_pr: str) -> str:
         """제목이 쪽 끝에 홀로 남지 않게 '다음 문단과 함께'를 켠 문단 모양."""

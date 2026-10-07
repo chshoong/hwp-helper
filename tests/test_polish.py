@@ -36,11 +36,12 @@ def test_bullets_keep_template_indent_and_glyph(blank):
 
 
 def test_blank_line_only_between_groups(blank):
+    """빈 줄은 묶음 사이(더 깊은 글머리 뒤에 새 ◦가 올 때)에만. ◦ → - 로 내려갈 때는 붙인다 (사용자 요청)."""
     pkg = gov_form(blank)
-    render_into(pkg, infer(pkg), "○ 첫 항목\n- 세부 하나\n- 세부 둘\n- 세부 셋\n")
+    render_into(pkg, infer(pkg), "○ 첫 항목\n- 세부 하나\n- 세부 둘\n○ 둘째 항목\n- 세부 셋\n○ 셋째 항목\n○ 넷째 항목\n")
     seq = ["blank" if is_blank(p) else own_text(p).strip()[:1] for p in body_tops(pkg)]
     seq = seq[seq.index("◦"):]
-    assert seq == ["◦", "blank", "-", "-", "-"]
+    assert seq == ["◦", "-", "-", "blank", "◦", "-", "blank", "◦", "◦"]
 
 
 def test_headings_keep_with_next(blank):
@@ -114,3 +115,30 @@ def test_note_font_is_not_font_mix(blank):
         append_to_body(pkg, para(LONG * 3))
     append_to_body(pkg, para("* 이상 라벨은 전처리·학습에 사용하지 않음", char_pr=small))
     assert [f for f in review(pkg) if f.code == "font-mix"] == []
+
+
+def test_group_blank_learned_from_filled_document(blank):
+    """이미 내용이 찬 문서(대부분 - 앞에 -)에서도, 글머리 사이에 빈 줄을 쓴 흔적이 있으면 묶음 사이에 빈 줄을 넣는다."""
+    pkg = Package.open(blank)
+    for text in ("□ 제1장. 데이터", " ◦ 첫 묶음 문장", "   - 세부 하나", "   - 세부 둘", "   - 세부 셋", "",
+                 " ◦ 둘째 묶음 문장", "   - 세부 넷", "   - 세부 다섯", "   - 세부 여섯"):
+        append_to_body(pkg, para(text))
+    append_to_body(pkg, para(LONG))
+    render_into(pkg, infer(pkg), "○ 새 묶음 하나\n- 세부\n○ 새 묶음 둘\n- 세부\n", mode="append")
+    seq = ["blank" if is_blank(p) else own_text(p).strip()[:6] for p in body_tops(pkg)]
+    i = seq.index("◦ 새 묶음")
+    assert seq[i:i + 5] == ["◦ 새 묶음", "- 세부", "blank", "◦ 새 묶음", "- 세부"]
+
+
+def test_no_group_blank_when_document_never_separates_bullets(blank):
+    """글머리 사이에 빈 줄을 쓴 적이 없는 양식에는 빈 줄을 새로 만들지 않는다."""
+    pkg = Package.open(blank)
+    for text in ("□ 제1장. 데이터", " ◦ 첫 묶음 문장", "   - 세부 하나", " ◦ 둘째 묶음 문장", "   - 세부 둘"):
+        append_to_body(pkg, para(text))
+    append_to_body(pkg, para(LONG))
+    append_to_body(pkg, para(""))  # 본문 뒤 빈 줄 (글머리 옆이 아님)
+    append_to_body(pkg, para(LONG))
+    render_into(pkg, infer(pkg), "○ 새 묶음 하나\n- 세부\n○ 새 묶음 둘\n", mode="append")
+    seq = ["blank" if is_blank(p) else own_text(p).strip()[:6] for p in body_tops(pkg)]
+    i = seq.index("◦ 새 묶음")
+    assert seq[i:i + 3] == ["◦ 새 묶음", "- 세부", "◦ 새 묶음"]

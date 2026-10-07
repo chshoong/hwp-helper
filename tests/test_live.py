@@ -211,3 +211,36 @@ def test_live_section_rewrite(live_doc, tmp_path):
     live.section(first.split()[0], f"# {first}\n\n□ 새로 쓴 장 내용\n○ 세부\n", doc=name)
     after = to_markdown(Package.open(live.export(tmp_path / "a.hwpx", doc=name)))
     assert "새로 쓴 장 내용" in after and after.count(first) == 1
+
+
+def _tops_text(pkg):
+    from hwpxkit.body import own_text
+    return [own_text(p).strip() for p in pkg.xml(pkg.section_names()[0]) if p.tag.endswith("}p")]
+
+
+@pytest.mark.hangul
+def test_live_section_twice_keeps_next_heading(live_doc, tmp_path):
+    """장 다시 쓰기를 두 번 해도 다음 장 제목이 따로 남는다 (끼워 넣은 마지막 문단과 합쳐지던 문제)."""
+    from hwpxkit.package import Package
+    name, _ = live_doc
+    for k in (1, 2):
+        live.section("Ⅰ.", f"# Ⅰ. 다시 쓴 장\n\n□ {k}번째로 다시 쓴 내용\n○ 세부\n", doc=name)
+        texts = _tops_text(Package.open(live.export(tmp_path / f"s{k}.hwpx", doc=name)))
+        assert "Ⅱ. 두 번째 장 제목" in texts, k
+        assert texts.count("Ⅰ. 다시 쓴 장") == 1
+
+
+@pytest.mark.hangul
+def test_live_replace_middle_keeps_neighbors(live_doc, tmp_path):
+    """문단 가운데를 여러 줄로 바꿔도 앞뒤 글은 각자 문단으로 남고 빈 문단이 생기지 않는다."""
+    from hwpxkit.package import Package
+    name, _ = live_doc
+    texts = _tops_text(Package.open(live.export(tmp_path / "b.hwpx", doc=name)))
+    i = next(i for i, t in enumerate(texts) if t.startswith("본문 견본 문단입니다."))
+    live.call("select_test", doc=name, para=i, start=5, end=12)
+    live.replace("○ 끼운 첫 줄\n○ 끼운 둘째 줄\n", doc=name)
+    after = _tops_text(Package.open(live.export(tmp_path / "a.hwpx", doc=name)))
+    j = next(k for k, t in enumerate(after) if t.startswith("본문 견본"))
+    assert after[j] == texts[i][:5].strip()
+    assert after[j + 1].endswith("끼운 첫 줄") and after[j + 2].endswith("끼운 둘째 줄")
+    assert after[j + 3] == texts[i][12:].strip()

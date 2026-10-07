@@ -54,6 +54,23 @@ function Find-Text($text, $times) {
   return $true
 }
 
+function Insert-Fragment($file) {
+  # 끼워 넣을 내용이 앞뒤 문단과 합쳐지지 않게, 커서 자리에 독립된 빈 문단을 만들고 그 안에 넣는다.
+  $p = $h.GetPosBySet()
+  $null = $h.HAction.Run("MoveParaEnd"); $e = $h.GetPosBySet(); $null = $h.SetPosBySet($p)
+  $atStart = ([int]$p.Item("Pos") -eq 0)
+  $atEnd = ([int]$e.Item("Pos") -eq [int]$p.Item("Pos"))
+  if ($atStart -and $atEnd) { }                                   # 빈 문단: 그대로 넣는다
+  elseif ($atStart) { $null = $h.HAction.Run("BreakPara"); $null = $h.HAction.Run("MovePrevParaEnd") }
+  elseif ($atEnd) { $null = $h.HAction.Run("BreakPara") }
+  else { $null = $h.HAction.Run("BreakPara"); $null = $h.HAction.Run("BreakPara"); $null = $h.HAction.Run("MovePrevParaEnd") }
+  $set = $h.HParameterSet.HInsertFile
+  $null = $h.HAction.GetDefault("InsertFile", $set.HSet)
+  $set.FileName = $file; $set.FileFormat = "HWPX"
+  $set.KeepSection = 0; $set.KeepCharshape = 1; $set.KeepParashape = 1; $set.KeepStyle = 1
+  return [bool]$h.HAction.Execute("InsertFile", $set.HSet)
+}
+
 try {
   switch ($a.action) {
     "status" {
@@ -101,12 +118,7 @@ try {
       } else {
         $null = $h.HAction.Run("MoveParaEnd")
       }
-      $null = $h.HAction.Run("BreakPara")
-      $set = $h.HParameterSet.HInsertFile
-      $null = $h.HAction.GetDefault("InsertFile", $set.HSet)
-      $set.FileName = $a.file; $set.FileFormat = "HWPX"
-      $set.KeepSection = 0; $set.KeepCharshape = 1; $set.KeepParashape = 1; $set.KeepStyle = 1
-      Emit @{ ok = [bool]$h.HAction.Execute("InsertFile", $set.HSet) }
+      Emit @{ ok = (Insert-Fragment $a.file) }
     }
     "captions_before" {
       # 커서 문단 앞에 있는 캡션 달린 표·그림 수 (번호를 이어 매기기 위해)
@@ -139,11 +151,7 @@ try {
       } else { $null = $h.MovePos(3, 0, 0); $e = $h.GetPosBySet() }
       $null = $h.SelectText([int]$s.Item("Para"), 0, [int]$e.Item("Para"), [int]$e.Item("Pos"))
       $null = $h.HAction.Run("Delete")
-      $set = $h.HParameterSet.HInsertFile
-      $null = $h.HAction.GetDefault("InsertFile", $set.HSet)
-      $set.FileName = $a.file; $set.FileFormat = "HWPX"
-      $set.KeepSection = 0; $set.KeepCharshape = 1; $set.KeepParashape = 1; $set.KeepStyle = 1
-      Emit @{ ok = [bool]$h.HAction.Execute("InsertFile", $set.HSet) }
+      Emit @{ ok = (Insert-Fragment $a.file) }
     }
     default { Emit @{ ok = $false; error = "unknown_action" } }
   }
