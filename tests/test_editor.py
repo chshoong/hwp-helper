@@ -447,3 +447,20 @@ def test_server_leaves_no_temp_dirs(blank, tmp_path, monkeypatch):
     srv = make_server(d, AskQueue.for_copy(d.path), "k")
     srv.server_close()
     assert list((tmp_path / "tmp").iterdir()) == []
+
+
+@pytest.mark.hangul
+def test_server_pages_with_hangul(server):
+    srv, _ = server
+    st, r = call(srv, "POST", "/api/pages", {})
+    assert st == 200 and r["pages"] and r["pages"][0].startswith("/pages/")
+    st, png = call(srv, "GET", r["pages"][0])
+    assert st == 200 and png[:4] == b"\x89PNG"
+
+
+def test_skill_documents_edit():
+    root = Path(__file__).parents[1] / "skills" / "hwp-helper"
+    text = (root / "reference" / "editor.md").read_text(encoding="utf-8")
+    for cmd in ("edit start", "edit watch", "edit asks", "edit apply", "edit stop"):
+        assert cmd in text, cmd
+    assert "reference/editor.md" in (root / "SKILL.md").read_text(encoding="utf-8")
