@@ -4,6 +4,7 @@ import json
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -285,3 +286,84 @@ def test_apply_render_error_keeps_copy(blank, tmp_path, monkeypatch):
     r = d.apply(qu, a["id"], "![x](없음.png)\n", tmp_path)
     assert r["status"] == "error" and "없음.png" in r["message"]
     assert d.path.read_bytes() == before and d.version == 1
+
+
+@pytest.fixture
+def server(blank, tmp_path):
+    from hwpxkit.editor import AskQueue, EditDoc
+    from hwpxkit.editor.server import make_server
+    d = EditDoc(make_doc(blank, tmp_path))
+    srv = make_server(d, AskQueue.for_copy(d.path), "열쇠", base_dir=tmp_path)
+    th = threading.Thread(target=srv.serve_forever, daemon=True)
+    th.start()
+    yield srv, d
+    srv.shutdown()
+    srv.server_close()
+
+
+def call(srv, method, path, body=None, key="열쇠"):
+    url = f"http://127.0.0.1:{srv.server_address[1]}{path}"
+    data = None if body is None else json.dumps(body).encode()
+    req = urllib.request.Request(url, data=data, method=method,
+                                 headers={"X-Key": urllib.parse.quote(key), "Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=10) as r:
+            raw = r.read()
+            return r.status, (json.loads(raw) if r.headers.get_content_type() == "application/json" else raw)
+    except urllib.error.HTTPError as e:
+        return e.code, json.loads(e.read() or b"{}")
+
+
+def test_server_rejects_wrong_key(server):
+    srv, _ = server
+    assert call(srv, "GET", "/api/doc", key="틀림")[0] == 403
+    assert call(srv, "GET", "/", key="틀림")[0] == 403
+
+
+def test_server_page_with_key_in_query(server):
+    srv, _ = server
+    with urllib.request.urlopen(srv.url, timeout=10) as r:
+        assert r.status == 200 and "한글 편집" in r.read().decode("utf-8")
+
+
+def test_server_edit_flow(server):
+    srv, d = server
+    st, doc = call(srv, "GET", "/api/doc")
+    assert st == 200 and doc["version"] == 1
+    st, r = call(srv, "POST", "/api/edit", {"version": 1, "i": 2, "text": "서버로 고침"})
+    assert st == 200 and r["version"] == 2
+    assert call(srv, "POST", "/api/edit", {"version": 1, "i": 2, "text": "옛 판"})[0] == 409
+    st, r = call(srv, "POST", "/api/edit", {"version": 2, "i": 4, "r": 0, "c": 0, "text": "창고명"})
+    assert st == 200
+    st, r = call(srv, "POST", "/api/undo", {})
+    assert st == 200 and r["version"] == 4
+
+
+def test_server_ask_and_apply(server):
+    srv, d = server
+    st, a = call(srv, "POST", "/api/ask", {"version": 1, "start": 2, "end": 3, "text": "줄여줘"})
+    assert st == 200 and a["id"] == "a1"
+    st, asks = call(srv, "GET", "/api/asks")
+    assert [x["status"] for x in asks["asks"]] == ["pending"]
+    st, r = call(srv, "POST", "/api/apply", {"id": "a1", "md": "줄인 결과 문장입니다\n"})
+    assert st == 200 and r["status"] == "done"
+    assert "줄인 결과" in d.texts()[2]
+
+
+def test_server_bad_json_is_400(server):
+    srv, _ = server
+    st, r = call(srv, "POST", "/api/edit", {"version": 1})
+    assert st == 400 and r["error"]
+
+
+def test_idle_shutdown(blank, tmp_path):
+    from hwpxkit.editor import AskQueue, EditDoc
+    from hwpxkit.editor.server import make_server, watch_idle
+    d = EditDoc(make_doc(blank, tmp_path))
+    srv = make_server(d, AskQueue.for_copy(d.path), "k", idle=0.3)
+    th = threading.Thread(target=srv.serve_forever, daemon=True)
+    th.start()
+    watch_idle(srv, every=0.1)
+    th.join(timeout=5)
+    assert not th.is_alive()
+    srv.server_close()
