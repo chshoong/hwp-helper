@@ -43,3 +43,47 @@ def pytest_collection_modifyitems(config, items):
     for item in items:
         if "hangul" in item.keywords:
             item.add_marker(skip)
+
+
+@pytest.fixture
+def live_doc(tmp_path_factory):
+    """사람이 연 것처럼 시험 문서를 한글로 연다(문서 이름 고유). 끝나면 그 문서만 닫는다."""
+    import subprocess as sp
+    import time
+    from hwpxkit import live
+    from hwpxkit.presets import path as preset_path
+    folder = tmp_path_factory.mktemp("live")
+    name = f"livetest_{int(time.time() * 1000)}.hwpx"
+    doc = folder / name
+    shutil.copyfile(preset_path("gov-brief"), doc)
+    before = _hwp_pids()
+    sp.Popen([str(live.hwp_exe()), str(doc)])
+    ready = 0
+    for _ in range(60):  # 문서가 열리고 활성 문서로 두 번 연속 확인될 때까지 (열리는 중에 명령이 들어가지 않게)
+        time.sleep(0.5)
+        try:
+            ready = ready + 1 if live.status(doc=name)["active"].endswith(name) else 0
+        except live.LiveError:
+            ready = 0
+        if ready >= 2:
+            break
+    time.sleep(1)
+    yield name, doc
+    try:
+        live.call("close_doc", doc=name)
+    except live.LiveError:
+        pass
+    # close_doc은 시험 문서만 닫고 한글은 끄지 않는다: 이 시험이 띄운 한글만 끄고, 다 꺼질 때까지 기다린다
+    # (다음 시험이 꺼지는 한글에 붙지 않도록)
+    for pid in _hwp_pids() - before:
+        sp.run(["taskkill", "/PID", pid, "/F"], capture_output=True)
+    for _ in range(30):
+        if not (_hwp_pids() - before):
+            break
+        time.sleep(0.5)
+
+
+def _hwp_pids() -> set:
+    import subprocess as sp
+    out = sp.run(["tasklist", "/FI", "IMAGENAME eq Hwp.exe", "/FO", "CSV", "/NH"], capture_output=True).stdout
+    return {line.split('","')[1] for line in out.decode("cp949", errors="replace").splitlines() if '","' in line}

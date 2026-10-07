@@ -81,6 +81,7 @@ class Catalog:
     eq_table_para: etree._Element | None = None
     eq_label: str = "({n})"
     notes: list = field(default_factory=list)
+    bullet_spacer: "ParaStyle | None" = None  # 글머리(○·-··) 묶음 사이에 쓴 빈 줄 서식 (문서에 그런 빈 줄이 있을 때만)
 
     def require(self, role: str) -> ParaStyle:
         r = role
@@ -284,6 +285,17 @@ def learn(paragraphs, h: Header, chars: dict[str, str]):
     return paras, notes, captions
 
 
+def _bullet_spacer(tops, h: Header, chars) -> "ParaStyle | None":
+    """○·-·· 글머리 바로 앞뒤에 있는 빈 줄 중 가장 많이 쓴 서식. 그런 빈 줄이 없으면 None."""
+    roles = [classify(p, h, chars)[0] for p in tops]
+    deep = lambda r: bool(r) and r.startswith("bullet") and r[-1] in "234"  # noqa: E731
+    found: Counter = Counter()
+    for i, p in enumerate(tops):
+        if roles[i] == "blank" and ((i > 0 and deep(roles[i - 1])) or (i + 1 < len(tops) and deep(roles[i + 1]))):
+            found[style_of(p, h)] += 1
+    return found.most_common(1)[0][0] if found else None
+
+
 def infer(pkg: Package, section: str | None = None) -> Catalog:
     h = Header(pkg)
     chars = bullet_chars(h)
@@ -296,6 +308,7 @@ def infer(pkg: Package, section: str | None = None) -> Catalog:
     table_para = copy.deepcopy((captioned or samples_)[0]) if samples_ else None
     figure_para = next((copy.deepcopy(p) for p in tops if contains(p, "hp:pic") and contains(p, "hp:caption")), None)
     cat = Catalog(paras, table_para, figure_para, notes=notes)
+    cat.bullet_spacer = _bullet_spacer(tops, h, chars)
     cat.tbl_label = _label_format([t for r, t in captions if r == "caption_tbl"], "표", cat.tbl_label)
     cat.fig_label = _label_format([t for r, t in captions if r == "caption_fig"], "그림", cat.fig_label)
     eq_tables = [p for p in tops if _is_eq_table(p)]

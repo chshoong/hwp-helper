@@ -328,3 +328,31 @@ def test_append_warns_when_document_lacks_samples(tmp_path, capsys):
     assert main(["render", str(first), str(ch2), str(tmp_path / "ch12.hwpx"), "--mode", "append"]) == 0
     out = capsys.readouterr().out
     assert "[주의]" in out and "표" in out and "수식" in out
+
+
+def test_live_status_cli(monkeypatch, capsys):
+    from hwpxkit import live
+    monkeypatch.setattr(live, "status", lambda doc=None: {
+        "docs": ["C:/a/보고서.hwp"], "active": "C:/a/보고서.hwp", "modified": True, "selection": False})
+    assert main(["live", "status"]) == 0
+    out = capsys.readouterr().out
+    assert "보고서.hwp" in out and "수정됨" in out
+
+
+def test_live_replace_cli_reads_file(monkeypatch, tmp_path, capsys):
+    from hwpxkit import live
+    seen = {}
+    monkeypatch.setattr(live, "replace", lambda md, doc=None, base_dir=None: seen.update(md=md) or {"mode": "text", "warnings": []})
+    f = tmp_path / "new.md"
+    f.write_text("새 문장", encoding="utf-8")
+    assert main(["live", "replace", str(f)]) == 0
+    assert seen["md"] == "새 문장" and "바꿨어요" in capsys.readouterr().out
+
+
+def test_live_error_is_user_error(monkeypatch, capsys):
+    from hwpxkit import live
+    def boom(doc=None):
+        raise live.LiveError("한글에서 문서를 연 뒤 다시 말씀해 주세요.")
+    monkeypatch.setattr(live, "status", boom)
+    assert main(["live", "status"]) == 2
+    assert "한글에서 문서를 연 뒤" in capsys.readouterr().err
