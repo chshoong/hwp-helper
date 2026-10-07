@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 import secrets
+import shutil
 import tempfile
 import threading
 import time
@@ -17,6 +18,22 @@ from .queue import AskQueue
 _PAGE = Path(__file__).with_name("page.html")
 
 
+class _Server(ThreadingHTTPServer):
+    """쪽 그림 폴더는 처음 쓸 때 만들고, 서버를 닫을 때 지운다."""
+    pages_dir: Path | None = None
+
+    def pages(self) -> Path:
+        if self.pages_dir is None:
+            self.pages_dir = Path(tempfile.mkdtemp(prefix="hwpx-edit-pages-"))
+        return self.pages_dir
+
+    def server_close(self):
+        super().server_close()
+        if self.pages_dir is not None:
+            shutil.rmtree(self.pages_dir, ignore_errors=True)
+            self.pages_dir = None
+
+
 def state_path(copy: Path) -> Path:
     copy = Path(copy)
     return copy.with_name(f"{copy.stem}.서버.json")
@@ -24,8 +41,6 @@ def state_path(copy: Path) -> Path:
 
 def make_server(doc: EditDoc, queue: AskQueue, key: str, *, port: int = 0, idle: float = 7200,
                 base_dir: Path | None = None) -> ThreadingHTTPServer:
-    pages_dir = Path(tempfile.mkdtemp(prefix="hwpx-edit-pages-"))
-
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *args):  # 조용히
             pass
@@ -68,7 +83,7 @@ def make_server(doc: EditDoc, queue: AskQueue, key: str, *, port: int = 0, idle:
             if method == "GET" and path == "/api/asks":
                 return self._send(200, {"asks": queue.all()})
             if method == "GET" and path.startswith("/pages/"):
-                f = pages_dir / Path(path).name
+                f = srv.pages() / Path(path).name
                 if not f.is_file():
                     return self._send(404, {"error": "쪽 그림이 없어요."})
                 return self._send(200, f.read_bytes(), "image/png")
@@ -91,9 +106,9 @@ def make_server(doc: EditDoc, queue: AskQueue, key: str, *, port: int = 0, idle:
                 from .. import bridge
                 if not bridge.available():
                     raise EditError("한글이 있어야 실제 쪽 모양을 볼 수 있어요.", 400)
-                for old in pages_dir.glob("*.png"):
+                for old in srv.pages().glob("*.png"):
                     old.unlink()
-                files = bridge.page_images(doc.path, pages_dir)
+                files = bridge.page_images(doc.path, srv.pages())
                 return self._send(200, {"pages": [f"/pages/{f.name}" for f in files]})
             if method == "POST" and path == "/api/stop":
                 threading.Thread(target=srv.shutdown, daemon=True).start()
@@ -106,7 +121,7 @@ def make_server(doc: EditDoc, queue: AskQueue, key: str, *, port: int = 0, idle:
         def do_POST(self):
             self._route("POST")
 
-    srv = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    srv = _Server(("127.0.0.1", port), Handler)
     srv.daemon_threads = True
     srv.last = time.monotonic()
     srv.idle = idle

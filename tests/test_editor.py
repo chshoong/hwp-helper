@@ -425,3 +425,25 @@ def test_start_reuses_running_server(blank, tmp_path, capsys):
         assert capsys.readouterr().out.splitlines()[0] == first
     finally:
         _cli("stop", src)
+
+
+def test_page_is_self_contained_and_uses_api():
+    html = (Path(__file__).parents[1] / "hwpxkit" / "editor" / "page.html").read_text(encoding="utf-8")
+    assert "http://" not in html.replace("http://127.0.0.1", "") and "https://" not in html
+    for api in ("/api/doc", "/api/edit", "/api/ask", "/api/asks", "/api/undo", "/api/pages", "X-Key"):
+        assert api in html, api
+    for word in ("고치기", "부탁하기", "되돌리기", "쪽 모양 확인"):
+        assert word in html, word
+
+
+def test_server_leaves_no_temp_dirs(blank, tmp_path, monkeypatch):
+    """서버를 켜고 끌 때 쪽 그림용 임시 폴더를 남기지 않는다 (쪽 그림을 만들 때만 만든다)."""
+    import tempfile as tf
+    from hwpxkit.editor import AskQueue, EditDoc
+    from hwpxkit.editor.server import make_server
+    monkeypatch.setattr(tf, "tempdir", str(tmp_path / "tmp"))
+    (tmp_path / "tmp").mkdir()
+    d = EditDoc(make_doc(blank, tmp_path))
+    srv = make_server(d, AskQueue.for_copy(d.path), "k")
+    srv.server_close()
+    assert list((tmp_path / "tmp").iterdir()) == []
