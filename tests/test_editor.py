@@ -367,3 +367,61 @@ def test_idle_shutdown(blank, tmp_path):
     th.join(timeout=5)
     assert not th.is_alive()
     srv.server_close()
+
+
+def _cli(*args):
+    from hwpxkit.cli import main
+    return main(["edit", *map(str, args)])
+
+
+def test_cli_asks_and_apply_without_server(blank, tmp_path, capsys):
+    from hwpxkit.editor import AskQueue, EditDoc
+    src = make_doc(blank, tmp_path)
+    d = EditDoc(src)
+    d.ask(AskQueue.for_copy(d.path), 1, 2, 3, "줄여줘")
+    assert _cli("asks", src, "--json") == 0
+    asks = json.loads(capsys.readouterr().out)
+    assert asks[0]["id"] == "a1" and LONG in asks[0]["markdown"]
+    md = tmp_path / "새.md"
+    md.write_text("CLI로 바꾼 문장입니다\n", encoding="utf-8")
+    assert _cli("apply", src, "a1", md) == 0
+    assert "반영했어요" in capsys.readouterr().out
+    assert "CLI로 바꾼" in EditDoc(src).texts()[2]
+
+
+def test_cli_apply_stale_exit_1(blank, tmp_path, capsys):
+    from hwpxkit.editor import AskQueue, EditDoc
+    src = make_doc(blank, tmp_path)
+    d = EditDoc(src)
+    d.ask(AskQueue.for_copy(d.path), 1, 2, 3, "줄여줘")
+    d.edit_para(d.version, 2, "딴 글")
+    md = tmp_path / "새.md"
+    md.write_text("새 글\n", encoding="utf-8")
+    assert _cli("apply", src, "a1", md) == 1
+    assert "다시 확인" in capsys.readouterr().out
+
+
+def test_start_serve_stop(blank, tmp_path, capsys):
+    src = make_doc(blank, tmp_path)
+    before = hashlib.sha256(src.read_bytes()).hexdigest()
+    try:
+        assert _cli("start", src) == 0
+        out = capsys.readouterr().out
+        url = out.splitlines()[0].split(": ", 1)[1]
+        with urllib.request.urlopen(url, timeout=10) as r:
+            assert r.status == 200
+    finally:
+        assert _cli("stop", src) == 0
+    assert hashlib.sha256(src.read_bytes()).hexdigest() == before
+    assert not (tmp_path / "보고서_수정.서버.json").exists()
+
+
+def test_start_reuses_running_server(blank, tmp_path, capsys):
+    src = make_doc(blank, tmp_path)
+    try:
+        _cli("start", src)
+        first = capsys.readouterr().out.splitlines()[0]
+        _cli("start", src)
+        assert capsys.readouterr().out.splitlines()[0] == first
+    finally:
+        _cli("stop", src)

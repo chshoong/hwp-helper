@@ -10,6 +10,7 @@ import json
 import shutil
 import sys
 import tempfile
+import urllib.parse
 from collections import Counter
 from pathlib import Path
 
@@ -354,6 +355,124 @@ def _cmd_live(args, workdir) -> int:
     return 0
 
 
+def _edit_state(src: Path) -> dict | None:
+    """살아 있는 편집 서버의 상태 (없거나 죽었으면 None, 죽은 상태 파일은 지운다)."""
+    import urllib.request
+    from .editor import copy_path
+    from .editor.server import state_path
+    st_file = state_path(copy_path(src))
+    if not st_file.exists():
+        return None
+    st = json.loads(st_file.read_text(encoding="utf-8"))
+    try:
+        req = urllib.request.Request(f"http://127.0.0.1:{st['port']}/api/doc",
+                                     headers={"X-Key": urllib.parse.quote(st["key"])})
+        with urllib.request.urlopen(req, timeout=5):
+            return st
+    except OSError:
+        st_file.unlink(missing_ok=True)
+        return None
+
+
+def _edit_post(st: dict, path: str, body: dict) -> tuple[int, dict]:
+    import urllib.error
+    import urllib.request
+    req = urllib.request.Request(f"http://127.0.0.1:{st['port']}{path}", method="POST",
+                                 data=json.dumps(body, ensure_ascii=False).encode("utf-8"),
+                                 headers={"X-Key": urllib.parse.quote(st["key"]), "Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=120) as r:
+            return r.status, json.loads(r.read())
+    except urllib.error.HTTPError as e:
+        return e.code, json.loads(e.read() or b"{}")
+
+
+def _cmd_edit(args, workdir) -> int:
+    import subprocess
+    import time
+    from .editor import AskQueue, EditDoc, copy_path
+    from .editor.server import serve, state_path
+    src = Path(args.file)
+    if not src.is_file():
+        raise PackageError(f"파일을 찾을 수 없어요: {src}")
+    act = args.edit_action
+    if act == "serve":
+        serve(src)
+        return 0
+    if act == "start":
+        st = _edit_state(src)
+        if st is None:
+            EditDoc(src)  # 사본을 먼저 만들어 오류를 여기서 알린다
+            root = Path(__file__).resolve().parents[1]
+            flags = getattr(subprocess, "DETACHED_PROCESS", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+            subprocess.Popen([sys.executable, str(root / "hwpx.py"), "edit", "serve", str(src)],
+                             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                             creationflags=flags, close_fds=True)
+            for _ in range(60):
+                time.sleep(0.25)
+                st = _edit_state(src)
+                if st:
+                    break
+            if st is None:
+                raise PackageError("편집 화면을 띄우지 못했어요. 다시 시도해 주세요.")
+        print(f"편집 화면: {st['url']}")
+        print(f"사본: {copy_path(src)} (원본은 그대로)")
+        return 0
+    if act == "stop":
+        st = _edit_state(src)
+        if st:
+            _edit_post(st, "/api/stop", {})
+            for _ in range(20):
+                time.sleep(0.25)
+                if not state_path(copy_path(src)).exists():
+                    break
+        state_path(copy_path(src)).unlink(missing_ok=True)
+        print("편집 화면을 껐어요.")
+        return 0
+    queue = AskQueue.for_copy(copy_path(src))
+    if act == "asks":
+        doc = EditDoc(src)
+        pending = [{"id": a["id"], "text": a["text"], "start": a["start"], "end": a["end"],
+                    "markdown": doc.range_markdown(a["start"], a["end"])}
+                   for a in queue.all() if a["status"] == "pending"]
+        if args.json:
+            print(json.dumps(pending, ensure_ascii=False))
+        elif not pending:
+            print("대기 중인 부탁이 없어요.")
+        for a in [] if args.json else pending:
+            print(f"[{a['id']}] {a['start']}~{a['end'] - 1}번 문단: {a['text']}\n{a['markdown']}")
+        return 0
+    if act == "watch":
+        seen = {a["id"] for a in queue.all()}
+        while state_path(copy_path(src)).exists():
+            for a in queue.all():
+                if a["id"] not in seen and a["status"] == "pending":
+                    seen.add(a["id"])
+                    print(f"새 부탁 {a['id']}: {a['text']}", flush=True)
+            time.sleep(2)
+        print("편집 화면이 꺼졌어요.", flush=True)
+        return 0
+    # apply
+    md_path = Path(args.md)
+    if not md_path.is_file():
+        raise PackageError(f"내용 파일을 찾을 수 없어요: {md_path}")
+    md = md_path.read_text(encoding="utf-8-sig")
+    st = _edit_state(src)
+    if st:
+        code, r = _edit_post(st, "/api/apply", {"id": args.ask_id, "md": md, "base_dir": str(md_path.parent)})
+        if code != 200:
+            raise PackageError(r.get("error", "반영하지 못했어요."))
+    else:
+        r = EditDoc(src).apply(queue, args.ask_id, md, md_path.parent)
+    for w in r.get("warnings", []):
+        print(f"[주의] {w}")
+    if r["status"] == "done":
+        print("반영했어요. 편집 화면이 새로 고쳐져요.")
+        return 0
+    print(r["message"])
+    return 1
+
+
 def _parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="hwpxkit", description="HWPX 문서 도구")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -422,6 +541,13 @@ def _parser() -> argparse.ArgumentParser:
     s.add_argument("--memo", action="store_true", help="review: 지적 사항을 한글 메모로 달기")
     s.add_argument("--json", action="store_true")
     s.set_defaults(func=_cmd_live)
+    s = sub.add_parser("edit", help="앱 브라우저 창에서 사본을 보며 고치기 (원본은 그대로)")
+    s.add_argument("edit_action", choices=["start", "serve", "asks", "apply", "watch", "stop"])
+    s.add_argument("file", help="원본 .hwpx (또는 .hwp)")
+    s.add_argument("ask_id", nargs="?", default="", help="apply: 부탁 번호 (예: a1)")
+    s.add_argument("md", nargs="?", default="", help="apply: 새 내용 .md")
+    s.add_argument("--json", action="store_true")
+    s.set_defaults(func=_cmd_edit)
     return p
 
 
