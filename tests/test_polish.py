@@ -104,3 +104,13 @@ def test_bullet_with_children_keeps_with_next(blank):
         return h.get("paraPr", p.get("paraPrIDRef")).find(q("hh:breakSetting")).get("keepWithNext")
     assert keep("소제목 노릇을 하는 줄") == "1"
     assert keep("혼자 있는 줄") == "0"
+
+
+def test_note_font_is_not_font_mix(blank):
+    """양식의 주석 줄(* …)이 일부러 다른 글꼴(맑은 고딕 등)이어도 글꼴 혼용으로 알리지 않는다."""
+    pkg = Package.open(blank)
+    small = Header(pkg).derive_font("0", "맑은 고딕")
+    for _ in range(4):
+        append_to_body(pkg, para(LONG * 3))
+    append_to_body(pkg, para("* 이상 라벨은 전처리·학습에 사용하지 않음", char_pr=small))
+    assert [f for f in review(pkg) if f.code == "font-mix"] == []

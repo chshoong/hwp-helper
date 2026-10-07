@@ -259,8 +259,8 @@ def _check_fonts(pkg: Package) -> list[Finding]:
         if next(p.iter(q("hp:tbl")), None) is not None:
             continue
         role, _ = classify(p, h, chars, levels)
-        if role and (role.startswith("h") or role == "bullet1"):
-            continue  # 제목은 일부러 다른 글꼴(HY헤드라인M 등)을 쓰는 양식이 많다
+        if role and (role.startswith("h") or role in ("bullet1", "note")):
+            continue  # 제목·주석 줄은 일부러 다른 글꼴(HY헤드라인M, 맑은 고딕 등)을 쓰는 양식이 많다
         for run in p.findall(q("hp:run")):
             text = "".join(t.text or "" for t in run.findall(q("hp:t"))).strip()
             if not text:
