@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import datetime as dt
 import re
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 
 from collections import Counter
 
@@ -37,6 +37,7 @@ class Finding:
     level: str  # "오류" | "확인"
     code: str
     message: str
+    anchor: str = field(default="", compare=False)  # 문서에서 그대로 찾을 수 있는 글 (한글 메모 위치)
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -96,11 +97,12 @@ def _check_dates(texts: list[tuple[str, str]], period) -> list[Finding]:
             try:
                 day = dt.date(y, mo, d)
             except ValueError:
-                out.append(Finding("오류", "bad-date", f"'{m.group(0).strip()}': 없는 날짜예요."))
+                out.append(Finding("오류", "bad-date", f"'{m.group(0).strip()}': 없는 날짜예요.", anchor=m.group(0).strip()))
                 continue
             real = _WEEKDAYS[day.weekday()]
             if wd and real != wd:
-                out.append(Finding("오류", "weekday", f"'{m.group(0)}': {y}년 {mo}월 {d}일은 {real}요일이에요."))
+                out.append(Finding("오류", "weekday", f"'{m.group(0)}': {y}년 {mo}월 {d}일은 {real}요일이에요.",
+                                   anchor=m.group(0).strip()))
             if period and _REPORT_DATE_WORDS.search(context):
                 py, pm = period
                 start = dt.date(py, pm, 1)
@@ -108,7 +110,8 @@ def _check_dates(texts: list[tuple[str, str]], period) -> list[Finding]:
                 end = dt.date(ny, nm, 1) - dt.timedelta(days=1)
                 if not start <= day <= end + dt.timedelta(days=62):
                     out.append(Finding("확인", "report-date",
-                                       f"'{m.group(0)}': 보고 대상 기간({py}년 {pm}월)과 맞지 않아요. 연도·달을 확인해 주세요."))
+                                       f"'{m.group(0)}': 보고 대상 기간({py}년 {pm}월)과 맞지 않아요. 연도·달을 확인해 주세요.",
+                                       anchor=m.group(0).strip()))
     return out
 
 
@@ -190,14 +193,16 @@ def _check_numbering(pkg: Package) -> list[Finding]:
         key = _key(kind, a, b)
         label = m.group(0).strip()
         if key in seen:
-            out.append(Finding("오류", "caption-dup", f"{label} 번호가 두 번 쓰였어요. renumber로 다시 매길 수 있어요."))
+            out.append(Finding("오류", "caption-dup", f"{label} 번호가 두 번 쓰였어요. renumber로 다시 매길 수 있어요.",
+                               anchor=t.text.strip()[:20]))
         seen.add(key)
         keys.add(key)
         group = (kind, a) if b else (kind,)
         n = int(b) if b else (int(a) if a.isdigit() else 0)
         prev = last.get(group, 0)
         if n not in (prev + 1, prev) and n != 1:
-            out.append(Finding("확인", "caption-gap", f"{label}: 앞 번호가 {prev}여서 번호가 건너뛰었어요."))
+            out.append(Finding("확인", "caption-gap", f"{label}: 앞 번호가 {prev}여서 번호가 건너뛰었어요.",
+                               anchor=t.text.strip()[:20]))
         last[group] = n
     caption_ts = {id(t) for t, _ in targets}
     for p in _tops(pkg):
@@ -208,7 +213,8 @@ def _check_numbering(pkg: Package) -> list[Finding]:
             if m.group(1) in opaque:
                 continue
             if _key(m.group(1), m.group(2), m.group(3)) not in keys:
-                out.append(Finding("오류", "bad-ref", f"본문이 {m.group(0)}을(를) 가리키는데 그런 {m.group(1)}이(가) 없어요."))
+                out.append(Finding("오류", "bad-ref", f"본문이 {m.group(0)}을(를) 가리키는데 그런 {m.group(1)}이(가) 없어요.",
+                                   anchor=m.group(0)))
     return out
 
 
@@ -223,11 +229,12 @@ def _check_cells(pkg: Package) -> list[Finding]:
             for text, n in texts.items():
                 if (n >= 2 and len(column) >= 2 and n == len([c for c in column if c.text.strip()])
                         and len(text) <= 20 and re.search(r"[가-힣]", text)):
-                    out.append(Finding("확인", "placeholder", f"[표{table}] '{text}' 안내 문구가 {n}칸에 그대로 남아 있어요."))
+                    out.append(Finding("확인", "placeholder", f"[표{table}] '{text}' 안내 문구가 {n}칸에 그대로 남아 있어요.",
+                                       anchor=text))
             if any(c.text.strip() for c in column):
                 for c in column:
                     if not c.text.strip():
-                        out.append(Finding("확인", "empty-cell", f"{c.label()}: 비어 있어요."))
+                        out.append(Finding("확인", "empty-cell", f"{c.label()}: 비어 있어요.", anchor=c.row_header))
         # 표지·신청서처럼 '항목 | 값' 두 열 표: 같은 열에 채운 칸이 없어도 빈 값 칸을 알린다
         tcells = [c for c in all_cells if c.table == table]
         if max(c.col + c.colspan for c in tcells) == 2:
@@ -236,7 +243,7 @@ def _check_cells(pkg: Package) -> list[Finding]:
             for c in tcells:
                 if (c.col == 1 and c.row > 0 and not c.text.strip()
                         and 0 < len(labels.get(c.row, "")) <= 15):
-                    f = Finding("확인", "empty-cell", f"{c.label()}: 비어 있어요.")
+                    f = Finding("확인", "empty-cell", f"{c.label()}: 비어 있어요.", anchor=c.row_header)
                     if f.message not in reported:
                         out.append(f)
     return out
@@ -268,7 +275,8 @@ def _check_fonts(pkg: Package) -> list[Finding]:
         return []
     total = sum(usage.values())
     main_face = usage.most_common(1)[0][0]
-    return [Finding("확인", "font-mix", f"본문에 {face} 글꼴이 섞여 있어요 (예: '{sample[face]}'). 주 글꼴은 {main_face}예요.")
+    return [Finding("확인", "font-mix", f"본문에 {face} 글꼴이 섞여 있어요 (예: '{sample[face]}'). 주 글꼴은 {main_face}예요.",
+                    anchor=sample[face])
             for face, n in usage.items() if face != main_face and n < 0.05 * total]
 
 
@@ -329,7 +337,8 @@ def _check_guide_text(pkg: Package) -> list[Finding]:
             text = " ".join(own_text(p).split())
             if text and text not in seen and _GUIDE_RE.search(text):
                 seen.add(text)
-                out.append(Finding("확인", "guide-text", f"양식 안내 문구가 남아 있어요: '{text[:40]}'"))
+                out.append(Finding("확인", "guide-text", f"양식 안내 문구가 남아 있어요: '{text[:40]}'",
+                                   anchor=own_text(p).strip()[:30]))
     return out
 
 

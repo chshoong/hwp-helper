@@ -192,3 +192,14 @@ def test_period_ignores_report_date_line(blank):
     first_title = next(p for p in root if p.tag == q("hp:p") and "월간업무보고서" in "".join(p.itertext()))
     root.insert(list(root).index(first_title), para("보고일: 2026년 3월 5일(목)"))
     assert "month-header" not in [f.code for f in review(pkg)]
+
+
+def test_findings_carry_anchor_text(blank):
+    from helpers import LONG, append_to_body, para
+    pkg = Package.open(blank)
+    append_to_body(pkg, para(LONG))
+    append_to_body(pkg, para("보고일: 2026.05.06.(목)"))
+    append_to_body(pkg, para("※ 추가적으로 기술할 내용은 자유롭게 작성 가능"))
+    found = {f.code: f.anchor for f in review(pkg)}
+    assert found["weekday"] == "2026.05.06.(목)"
+    assert found["guide-text"].startswith("※ 추가적으로")

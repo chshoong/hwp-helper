@@ -153,3 +153,22 @@ def insert(md: str, doc: str | None = None, base_dir: Path = Path(".")) -> dict:
         frag = fragment(md, screen, base_dir=base_dir, before_para=para + 1)
         call("insert_file", doc=doc, file=str(frag), replace_selection=False)
     return {"warnings": list(last_warnings)}
+
+
+from .review import review as _review  # noqa: E402
+
+
+def _review_file(path: Path):
+    return _review(Package.open(path))
+
+
+def review(doc: str | None = None, memo: bool = False) -> dict:
+    with tempfile.TemporaryDirectory(prefix="hl") as tmp:
+        findings = _review_file(export(Path(tmp) / "screen.hwpx", doc))
+    if not memo:
+        return {"findings": findings, "placed": 0, "missed": []}
+    memos = [{"anchor": f.anchor, "text": f"[검토] {f.message}"} for f in findings if f.anchor]
+    if not memos:
+        return {"findings": findings, "placed": 0, "missed": []}
+    r = call("memos", doc=doc, memos=memos)
+    return {"findings": findings, "placed": int(r["placed"]), "missed": list(r.get("missed") or [])}

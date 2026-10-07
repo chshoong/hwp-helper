@@ -93,6 +93,22 @@ try {
       # 커서 문단 앞에 있는 캡션 달린 표·그림 수 (번호를 이어 매기기 위해)
       $pos = $h.GetPosBySet(); Emit @{ ok = $true; para = [int]$pos.Item("Para") }
     }
+    "memos" {
+      $saved = $h.GetPosBySet(); $placed = 0; $missed = @()
+      foreach ($m in $a.memos) {
+        $null = $h.MovePos(2, 0, 0)
+        if (Find-Text $m.anchor 1) {
+          $null = $h.HAction.Run("InsertFieldMemo")
+          $set = $h.HParameterSet.HInsertText
+          $null = $h.HAction.GetDefault("InsertText", $set.HSet); $set.Text = $m.text
+          $null = $h.HAction.Execute("InsertText", $set.HSet)
+          $null = $h.HAction.Run("CloseEx")
+          $placed++
+        } else { $missed += $m.anchor }
+      }
+      $null = $h.HAction.Run("Cancel"); $null = $h.SetPosBySet($saved)
+      Emit @{ ok = $true; placed = $placed; missed = $missed }
+    }
     default { Emit @{ ok = $false; error = "unknown_action" } }
   }
 } catch { Emit @{ ok = $false; error = $_.Exception.Message } }

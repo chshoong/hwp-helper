@@ -130,3 +130,32 @@ def test_live_replace_and_insert_keep_format(live_doc, tmp_path):
              for p in pkg.xml(pkg.section_names()[0]) if p.tag.endswith("}p") and "끼워 넣은 항목" in own_text(p)
              for r in p.findall(q("hp:run")) if r.find(q("hp:t")) is not None}
     assert faces == {"휴먼명조"}  # gov-brief 글머리 글꼴 그대로
+
+
+def test_memo_reports_missed_anchors(fake, monkeypatch, tmp_path):
+    from hwpxkit import review as rv
+    monkeypatch.setattr(live, "export", lambda out, doc=None: Path(out))
+    monkeypatch.setattr(live, "_review_file", lambda path: [
+        rv.Finding("오류", "weekday", "요일이 틀려요", anchor="2026.05.06.(목)"),
+        rv.Finding("확인", "font-mix", "글꼴 섞임", anchor=""),
+        rv.Finding("확인", "guide-text", "안내 문구", anchor="없는 글")])
+    r = fake({"ok": True, "placed": 1, "missed": ["없는 글"]})
+    result = live.review(memo=True)
+    memos = r.calls[0]["memos"]
+    assert [m["anchor"] for m in memos] == ["2026.05.06.(목)", "없는 글"]  # anchor 없는 항목은 메모로 안 단다
+    assert memos[0]["text"].startswith("[검토] ")
+    assert result["placed"] == 1 and result["missed"] == ["없는 글"]
+
+
+@pytest.mark.hangul
+def test_live_review_places_memo(live_doc, tmp_path):
+    from hwpxkit.ns import q
+    from hwpxkit.package import Package
+    name, _ = live_doc
+    live.call("select_test", doc=name, para=1, start=0, end=0)
+    live.insert("보고일: 2026.05.06.(목)\n", doc=name)
+    result = live.review(doc=name, memo=True)
+    assert result["placed"] >= 1
+    pkg = Package.open(live.export(tmp_path / "memo.hwpx", doc=name))
+    memos = [fb for fb in pkg.xml(pkg.section_names()[0]).iter(q("hp:fieldBegin")) if fb.get("type") == "MEMO"]
+    assert any("요일" in "".join(t.text or "" for t in fb.iter(q("hp:t"))) for fb in memos)
