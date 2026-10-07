@@ -185,3 +185,11 @@ def test_caption_follows_body_font_when_no_caption_sample(blank):
     cap = next(pkg.xml(SECTION).iter(q("hp:caption")))
     run = next(cap.iter(q("hp:run")))
     assert h.charpr_faces(run.get("charPrIDRef"))["HANGUL"] == "휴먼명조"
+
+
+def test_number_from_continues_numbers(blank):
+    """끼워 넣을 자리 앞에 캡션 표가 2개 있으면 새 표는 3번, 본문 참조도 3번."""
+    pkg = plain(blank)
+    render_into(pkg, infer(pkg), TABLE_MD, number_from={"tbl": 2, "fig": 0})
+    assert next(pkg.xml(SECTION).iter(q("hp:autoNum"))).get("num") == "3"
+    assert any("[표 3]에 정리했다" in own_text(p) for p in tops(pkg))

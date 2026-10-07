@@ -83,3 +83,50 @@ def test_live_status_selection_export(live_doc, tmp_path):
     out = live.export(tmp_path / "screen.hwpx", doc=name)
     assert "견본" in to_markdown(Package.open(out))
     assert live.status(doc=name)["active"].endswith(name)  # 내보내기 뒤에도 창의 문서 경로 그대로
+
+
+def test_replace_without_selection_refuses(fake):
+    r = fake({"ok": True, "selected": False})
+    with pytest.raises(live.LiveError, match="드래그해 주세요"):
+        live.replace("새 문장")
+    assert [c["action"] for c in r.calls] == ["selection"]  # 바꾸기 동작은 부르지 않음
+
+
+def test_replace_single_paragraph_uses_text(fake):
+    r = fake({"ok": True, "selected": True, "text": "옛 문장", "para": 3, "in_table": False},
+             {"ok": True})
+    result = live.replace("새 **문장**")
+    assert result["mode"] == "text"
+    assert r.calls[1]["action"] == "replace_text"
+    assert Path(r.calls[1]["text_file"]).name.endswith(".txt")
+
+
+def test_markdown_block_needs_fragment():
+    assert live._needs_fragment("○ 개조식 줄", 1)
+    assert live._needs_fragment("| a | b |\n|---|---|\n| 1 | 2 |", 1)
+    assert live._needs_fragment("첫 줄\n둘째 줄", 1)
+    assert live._needs_fragment("한 줄", 2)
+    assert not live._needs_fragment("그냥 한 문장", 1)
+
+
+@pytest.mark.hangul
+def test_live_replace_and_insert_keep_format(live_doc, tmp_path):
+    from hwpxkit.body import all_text, own_text
+    from hwpxkit.header import Header
+    from hwpxkit.ns import q
+    from hwpxkit.package import Package
+    name, _ = live_doc
+    live.call("select_test", doc=name, para=1, start=0, end=2)
+    assert live.replace("바뀐 글", doc=name)["mode"] == "text"
+    live.insert("□ 끼워 넣은 항목\n○ 세부 내용\n\n표: 끼워 넣은 표\n| 구분 | 값 |\n|---|---|\n| 가 | 1 |\n", doc=name)
+    pkg = Package.open(live.export(tmp_path / "after.hwpx", doc=name))
+    texts = [own_text(p) for p in pkg.xml(pkg.section_names()[0]) if p.tag.endswith("}p")]
+    assert any("바뀐 글" in t for t in texts)
+    assert any(t.endswith("끼워 넣은 항목") for t in texts)
+    caps = [all_text(c) for c in pkg.xml(pkg.section_names()[0]).iter(q("hp:caption"))]
+    assert any("끼워 넣은 표" in c for c in caps)
+    h = Header(pkg)
+    faces = {h.charpr_faces(r.get("charPrIDRef"))["HANGUL"]
+             for p in pkg.xml(pkg.section_names()[0]) if p.tag.endswith("}p") and "끼워 넣은 항목" in own_text(p)
+             for r in p.findall(q("hp:run")) if r.find(q("hp:t")) is not None}
+    assert faces == {"휴먼명조"}  # gov-brief 글머리 글꼴 그대로

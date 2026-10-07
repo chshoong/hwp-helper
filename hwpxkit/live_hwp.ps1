@@ -67,6 +67,32 @@ try {
       $null = $h.SetPos(0, [int]$a.para, 0)
       Emit @{ ok = [bool]$h.SelectText([int]$a.para, [int]$a.start, [int]$a.para, [int]$a.end) }
     }
+    "replace_text" {
+      if ($h.SelectionMode -eq 0) { Emit @{ ok = $false; error = "no_selection" }; break }
+      $set = $h.HParameterSet.HInsertText
+      $null = $h.HAction.GetDefault("InsertText", $set.HSet)
+      $set.Text = [System.IO.File]::ReadAllText($a.text_file, [System.Text.Encoding]::UTF8)
+      Emit @{ ok = [bool]$h.HAction.Execute("InsertText", $set.HSet) }
+    }
+    "insert_file" {
+      # replace_selection이면 선택을 지우고 그 자리에, 아니면 커서가 있는 문단 다음에 새 문단을 만들어 넣는다.
+      if ($a.replace_selection) {
+        if ($h.SelectionMode -eq 0) { Emit @{ ok = $false; error = "no_selection" }; break }
+        $null = $h.HAction.Run("Delete")
+      } else {
+        $null = $h.HAction.Run("MoveParaEnd")
+      }
+      $null = $h.HAction.Run("BreakPara")
+      $set = $h.HParameterSet.HInsertFile
+      $null = $h.HAction.GetDefault("InsertFile", $set.HSet)
+      $set.FileName = $a.file; $set.FileFormat = "HWPX"
+      $set.KeepSection = 0; $set.KeepCharshape = 1; $set.KeepParashape = 1; $set.KeepStyle = 1
+      Emit @{ ok = [bool]$h.HAction.Execute("InsertFile", $set.HSet) }
+    }
+    "captions_before" {
+      # 커서 문단 앞에 있는 캡션 달린 표·그림 수 (번호를 이어 매기기 위해)
+      $pos = $h.GetPosBySet(); Emit @{ ok = $true; para = [int]$pos.Item("Para") }
+    }
     default { Emit @{ ok = $false; error = "unknown_action" } }
   }
 } catch { Emit @{ ok = $false; error = $_.Exception.Message } }

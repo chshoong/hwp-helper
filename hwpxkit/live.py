@@ -93,3 +93,63 @@ def hwp_exe() -> Path:
         except OSError:
             continue
     raise LiveError("한글 실행 파일을 찾지 못했어요.")
+
+
+import re  # noqa: E402
+
+from .package import Package  # noqa: E402
+from .render import _caption_counts, render_into  # noqa: E402
+from .samples import infer  # noqa: E402
+
+_BLOCK = re.compile(r"^\s*(#|[□○◦\-·•*※]\s|\||\$\$|!\[|표:)")
+last_warnings: list[str] = []
+
+
+def _needs_fragment(md: str, selected_paragraphs: int) -> bool:
+    """글만 바꾸면 되는지(한 문단 → 한 문장), 엔진 조각이 필요한지."""
+    lines = [ln for ln in md.strip().splitlines() if ln.strip()]
+    return selected_paragraphs > 1 or len(lines) != 1 or bool(_BLOCK.match(lines[0]))
+
+
+def _plain(md: str) -> str:
+    """한 줄 마크다운의 꾸밈 기호를 걷어 낸 글 (글자 모양은 선택 자리의 것을 그대로 쓴다)."""
+    text = re.sub(r"\*\*(.+?)\*\*", r"\1", md.strip())
+    return re.sub(r"\[\[색:[^\]]+\]\](.+?)\[\[/색\]\]", r"\1", text)
+
+
+def fragment(md: str, screen: Path, *, base_dir: Path, before_para: int | None) -> Path:
+    """화면 문서의 견본으로 조각(.hwpx)을 만든다. before_para 앞의 캡션 수 다음부터 번호를 매긴다."""
+    global last_warnings
+    pkg = Package.open(screen)
+    tops = [p for p in pkg.xml(pkg.section_names()[0]) if p.tag.endswith("}p")]
+    number_from = _caption_counts(tops[:before_para]) if before_para is not None else None
+    last_warnings = render_into(pkg, infer(Package.open(screen)), md, mode="new", base_dir=base_dir,
+                                number_from=number_from)
+    out = screen.with_name("fragment.hwpx")
+    pkg.save(out)
+    return out
+
+
+def replace(md: str, doc: str | None = None, base_dir: Path = Path(".")) -> dict:
+    sel = selection(doc)
+    if not sel["selected"]:
+        raise LiveError(_ERRORS["no_selection"])
+    with tempfile.TemporaryDirectory(prefix="hl") as tmp:
+        if not _needs_fragment(md, sel["paragraphs"]):
+            txt = Path(tmp) / "text.txt"
+            txt.write_text(_plain(md), encoding="utf-8")
+            call("replace_text", doc=doc, text_file=str(txt))
+            return {"mode": "text", "warnings": []}
+        screen = export(Path(tmp) / "screen.hwpx", doc)
+        frag = fragment(md, screen, base_dir=base_dir, before_para=sel["para"])
+        call("insert_file", doc=doc, file=str(frag), replace_selection=True)
+        return {"mode": "fragment", "warnings": list(last_warnings)}
+
+
+def insert(md: str, doc: str | None = None, base_dir: Path = Path(".")) -> dict:
+    para = int(call("captions_before", doc=doc)["para"])
+    with tempfile.TemporaryDirectory(prefix="hl") as tmp:
+        screen = export(Path(tmp) / "screen.hwpx", doc)
+        frag = fragment(md, screen, base_dir=base_dir, before_para=para + 1)
+        call("insert_file", doc=doc, file=str(frag), replace_selection=False)
+    return {"warnings": list(last_warnings)}

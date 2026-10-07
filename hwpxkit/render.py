@@ -574,8 +574,9 @@ def _unnumber_captionless(pkg: Package) -> None:
 
 def render_into(pkg: Package, catalog: Catalog, md: str, *, mode: str = "new",
                 replace: tuple[int, int] | None = None, base_dir: Path = Path("."),
-                section: str | None = None) -> list[str]:
-    """보고서 마크다운을 문서에 넣고 경고 목록을 돌려준다."""
+                section: str | None = None, number_from: dict[str, int] | None = None) -> list[str]:
+    """보고서 마크다운을 문서에 넣고 경고 목록을 돌려준다.
+    number_from={"tbl": n, "fig": n}이면 그 수 다음부터 번호를 매긴다(열린 한글에 끼워 넣을 자리 앞 캡션 수)."""
     blocks = parse(md)
     name = section_of(pkg, section)
     count = sum(1 for p in pkg.xml(name) if p.tag == q("hp:p"))
@@ -590,7 +591,8 @@ def render_into(pkg: Package, catalog: Catalog, md: str, *, mode: str = "new",
     tops = [p for p in pkg.xml(name) if p.tag == q("hp:p")]
     before = [p for sec in pkg.section_names()[:pkg.section_names().index(name)] for p in pkg.xml(sec)]
     before += tops[:replace[0]] if replace is not None else tops if mode == "append" else tops[:1]
-    r = Renderer(pkg, catalog, base_dir=base_dir, start=_caption_counts(before))
+    start = number_from if number_from is not None else _caption_counts(before)
+    r = Renderer(pkg, catalog, base_dir=base_dir, start=start)
     els = r.build(blocks)
     if replace is not None or mode == "append":
         missing = _missing_samples(blocks, catalog)
