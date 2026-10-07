@@ -62,3 +62,117 @@ def test_doc_blocks_roles_and_table(blank, tmp_path):
     assert tbl["kind"] == "table"
     assert [[c["text"] for c in row] for row in tbl["rows"]] == [["창고", "기간"], ["A", "6개월"]]
     assert tbl["rows"][1][1] == {"r": 1, "c": 1, "text": "6개월", "rs": 1, "cs": 1}
+
+
+def test_edit_para_keeps_formats(blank, tmp_path):
+    from hwpxkit.editor import EditDoc
+    d = EditDoc(make_doc(blank, tmp_path))
+    before = tops(d.path)[2]
+    v = d.edit_para(1, 2, "새로 쓴 문단")
+    after = tops(d.path)[2]
+    assert v == 2 == d.version
+    assert own_text(after) == "새로 쓴 문단"
+    assert after.get("paraPrIDRef") == before.get("paraPrIDRef")
+    assert after.find(q("hp:run")).get("charPrIDRef") == before.find(q("hp:run")).get("charPrIDRef")
+    assert next(after.iter(q("hp:linesegarray")), None) is None
+
+
+def test_edit_merges_mixed_runs_into_first(blank, tmp_path):
+    from hwpxkit.editor import EditDoc
+    from hwpxkit.header import Header
+    pkg = Package.open(blank)
+    p = para("앞 글 ")
+    bold = Header(pkg).derive_charpr("0", bold=True)
+    run = p.makeelement(q("hp:run"), {"charPrIDRef": bold})
+    t = run.makeelement(q("hp:t"), {})
+    t.text = "굵은 글"
+    run.append(t)
+    p.append(run)
+    append_to_body(pkg, p)
+    d = EditDoc(pkg.save(tmp_path / "섞임.hwpx"))
+    assert next(b for b in d.doc()["blocks"] if b["i"] == 1)["mixed"] is True
+    d.edit_para(1, 1, "하나로")
+    p1 = tops(d.path)[1]
+    assert [own_text(p1)] == ["하나로"] and len(p1.findall(q("hp:run"))) == 1
+
+
+def test_edit_keeps_section_controls(blank, tmp_path):
+    from hwpxkit.editor import EditDoc
+    d = EditDoc(make_doc(blank, tmp_path))
+    d.edit_para(1, 0, "첫 문단 글")
+    p0 = tops(d.path)[0]
+    assert own_text(p0) == "첫 문단 글" and next(p0.iter(q("hp:secPr")), None) is not None
+
+
+def test_edit_refuses_object_only(blank, tmp_path):
+    from hwpxkit.editor import EditDoc, EditError
+    d = EditDoc(make_doc(blank, tmp_path))
+    with pytest.raises(EditError) as e:
+        d.edit_para(1, 4, "표 문단")
+    assert e.value.status == 400 and "표·그림" in str(e.value)
+
+
+def test_edit_refuses_newline_and_stale_version(blank, tmp_path):
+    from hwpxkit.editor import EditDoc, EditError
+    d = EditDoc(make_doc(blank, tmp_path))
+    with pytest.raises(EditError, match="부탁하기") as e:
+        d.edit_para(1, 2, "두\n줄")
+    assert e.value.status == 400
+    d.edit_para(1, 2, "한 번")
+    with pytest.raises(EditError) as e:
+        d.edit_para(1, 2, "옛 판에서")
+    assert e.value.status == 409
+
+
+def test_edit_cell(blank, tmp_path):
+    from hwpxkit.editor import EditDoc
+    d = EditDoc(make_doc(blank, tmp_path))
+    d.edit_cell(1, 4, 1, 1, "12개월\n(연장)")
+    tbl = next(b for b in d.doc()["blocks"] if b["i"] == 4)
+    assert tbl["rows"][1][1]["text"] == "12개월\n(연장)"
+
+
+def test_undo_and_history_limit(blank, tmp_path, monkeypatch):
+    from hwpxkit.editor import EditDoc, EditError
+    from hwpxkit.editor import doc as docmod
+    monkeypatch.setattr(docmod, "HISTORY_KEEP", 3)
+    d = EditDoc(make_doc(blank, tmp_path))
+    for k in range(5):
+        d.edit_para(d.version, 2, f"판 {k}")
+    assert len(list(d.history_dir.glob("*.hwpx"))) == 3
+    d.undo()
+    assert own_text(tops(d.path)[2]) == "판 3" and d.version == 7
+    for _ in range(2):
+        d.undo()
+    with pytest.raises(EditError, match="되돌릴"):
+        d.undo()
+
+
+def test_external_change_detected(blank, tmp_path):
+    from hwpxkit.editor import EditDoc
+    d = EditDoc(make_doc(blank, tmp_path))
+    pkg = Package.open(d.path)
+    _p = [p for p in pkg.edit(SECTION) if p.tag == q("hp:p")][2]
+    _p.find(q("hp:run")).find(q("hp:t")).text = "한글에서 고침"
+    tmp = pkg.save(tmp_path / "x.hwpx")
+    time.sleep(0.05)
+    tmp.replace(d.path)
+    out = d.doc()
+    assert out["external_change"] is True and out["version"] == 2
+    assert d.doc()["external_change"] is False
+
+
+def test_locked_copy_is_not_damaged(blank, tmp_path, monkeypatch):
+    from hwpxkit.editor import EditDoc, EditError
+    from hwpxkit.editor import doc as docmod
+    d = EditDoc(make_doc(blank, tmp_path))
+    before = d.path.read_bytes()
+
+    def locked(*a, **k):
+        raise PermissionError("locked")
+    monkeypatch.setattr(docmod, "_replace", locked)
+    with pytest.raises(EditError) as e:
+        d.edit_para(1, 2, "막힘")
+    assert e.value.status == 423 and "한글에서" in str(e.value)
+    assert d.path.read_bytes() == before and d.version == 1
+    assert list(d.history_dir.glob("*.hwpx")) == []
