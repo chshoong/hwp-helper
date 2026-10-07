@@ -176,3 +176,35 @@ def test_locked_copy_is_not_damaged(blank, tmp_path, monkeypatch):
     assert e.value.status == 423 and "한글에서" in str(e.value)
     assert d.path.read_bytes() == before and d.version == 1
     assert list(d.history_dir.glob("*.hwpx")) == []
+
+
+def test_queue_add_and_status(tmp_path):
+    from hwpxkit.editor import AskQueue
+    qu = AskQueue.for_copy(tmp_path / "보고서_수정.hwpx")
+    assert qu.path == tmp_path / "보고서_수정.부탁.jsonl"
+    a = qu.add(3, 2, 4, ["가", "나"], "두 줄로 줄여줘")
+    b = qu.add(3, 5, 6, ["다"], "표로 바꿔줘")
+    assert (a["id"], b["id"], a["status"]) == ("a1", "a2", "pending")
+    qu.set("a1", "done")
+    again = AskQueue.for_copy(tmp_path / "보고서_수정.hwpx")
+    assert [x["status"] for x in again.all()] == ["done", "pending"]
+    assert again.get("a2")["text"] == "표로 바꿔줘"
+    with pytest.raises(KeyError):
+        again.get("a9")
+
+
+def test_locate_same_place():
+    from hwpxkit.editor.queue import locate
+    assert locate(["x", "가", "나", "y"], {"start": 1, "end": 3, "texts": ["가", "나"]}) == (1, 3)
+
+
+def test_locate_shifted():
+    from hwpxkit.editor.queue import locate
+    assert locate(["x", "새", "가", "나", "y"], {"start": 1, "end": 3, "texts": ["가", "나"]}) == (2, 4)
+
+
+def test_locate_ambiguous_or_missing():
+    from hwpxkit.editor.queue import locate
+    ask = {"start": 1, "end": 2, "texts": ["가"]}
+    assert locate(["x", "바뀜", "가", "가"], ask) is None
+    assert locate(["x", "없음"], ask) is None
