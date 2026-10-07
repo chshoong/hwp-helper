@@ -208,3 +208,80 @@ def test_locate_ambiguous_or_missing():
     ask = {"start": 1, "end": 2, "texts": ["가"]}
     assert locate(["x", "바뀜", "가", "가"], ask) is None
     assert locate(["x", "없음"], ask) is None
+
+
+def _ask(d, start, end, text="두 줄로 줄여줘"):
+    from hwpxkit.editor import AskQueue
+    qu = AskQueue.for_copy(d.path)
+    return qu, d.ask(qu, d.version, start, end, text)
+
+
+def test_ask_records_texts_and_refuses_bad_range(blank, tmp_path):
+    from hwpxkit.editor import EditError
+    from hwpxkit.editor import EditDoc
+    d = EditDoc(make_doc(blank, tmp_path))
+    qu, a = _ask(d, 2, 4)
+    assert a["texts"] == [LONG, "둘째 본문 문단이며 " + LONG] and a["version"] == 1
+    with pytest.raises(EditError, match="첫 문단"):
+        d.ask(qu, d.version, 0, 2, "x")
+    with pytest.raises(EditError, match="범위"):
+        d.ask(qu, d.version, 3, 3, "x")
+
+
+def test_range_markdown(blank, tmp_path):
+    from hwpxkit.editor import EditDoc
+    d = EditDoc(make_doc(blank, tmp_path))
+    md = d.range_markdown(2, 4)
+    assert LONG in md and "둘째 본문" in md and "제1장" not in md and "셋째" not in md
+
+
+def test_apply_replaces_range(blank, tmp_path):
+    from hwpxkit.editor import EditDoc
+    d = EditDoc(make_doc(blank, tmp_path))
+    qu, a = _ask(d, 2, 4)
+    r = d.apply(qu, a["id"], "줄인 문단 하나로 정리한 결과 문장이며 길이를 맞추기 위해 조금 더 씀\n", tmp_path)
+    assert r["status"] == "done" and r["version"] == 2
+    texts = d.texts()
+    assert "줄인 문단 하나로" in texts[2] and texts[3].startswith("창고")
+    assert qu.get(a["id"])["status"] == "done"
+
+
+def test_apply_after_shift(blank, tmp_path):
+    from hwpxkit.editor import EditDoc
+    d = EditDoc(make_doc(blank, tmp_path))
+    qu, a = _ask(d, 5, 6)
+    d.edit_para(d.version, 2, "앞 문단을 고침")
+    def add_para(pkg):
+        root = pkg.edit(SECTION)
+        ps = [p for p in root if p.tag == q("hp:p")]
+        root.insert(root.index(ps[1]) + 1, para("끼운 문단"))
+    d.write(add_para)
+    assert d.apply(qu, a["id"], "바뀐 셋째 문단\n", tmp_path)["status"] == "done"
+    assert "바뀐 셋째 문단" in d.texts()[-1]
+
+
+def test_apply_stale_keeps_copy(blank, tmp_path):
+    from hwpxkit.editor import EditDoc
+    d = EditDoc(make_doc(blank, tmp_path))
+    qu, a = _ask(d, 2, 3)
+    d.edit_para(d.version, 2, "완전히 다른 글")
+    before = d.path.read_bytes()
+    r = d.apply(qu, a["id"], "새 글\n", tmp_path)
+    assert r["status"] == "stale" and "바뀌" in r["message"]
+    assert d.path.read_bytes() == before and qu.get(a["id"])["status"] == "stale"
+
+
+def test_apply_render_error_keeps_copy(blank, tmp_path, monkeypatch):
+    from hwpxkit.editor import EditDoc
+    from hwpxkit.editor import doc as docmod
+    from hwpxkit.render import RenderError
+    d = EditDoc(make_doc(blank, tmp_path))
+    qu, a = _ask(d, 2, 3)
+    before = d.path.read_bytes()
+
+    def boom(*a, **k):
+        raise RenderError("그림 파일을 찾을 수 없어요: 없음.png")
+    monkeypatch.setattr(docmod, "render_into", boom)
+    r = d.apply(qu, a["id"], "![x](없음.png)\n", tmp_path)
+    assert r["status"] == "error" and "없음.png" in r["message"]
+    assert d.path.read_bytes() == before and d.version == 1

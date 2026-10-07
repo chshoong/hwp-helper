@@ -10,11 +10,14 @@ from typing import Callable
 
 from lxml import etree
 
-from ..body import own_text, strip_lineseg
+from ..body import all_text, own_text, strip_lineseg
 from ..header import Header
 from ..ns import q
 from ..package import Package
-from ..samples import bullet_chars, classify, heading_levels
+from ..reader import to_markdown
+from ..render import RenderError, render_into
+from ..samples import bullet_chars, classify, heading_levels, infer
+from .queue import AskQueue, locate
 
 HISTORY_KEEP = 50
 _replace = os.replace  # 사본 바꾸기 (시험에서 잠긴 파일 흉내용)
@@ -187,6 +190,51 @@ class EditDoc:
         v = self.write(mutate, history=False)
         last.unlink(missing_ok=True)
         return v
+
+    def texts(self) -> list[str]:
+        pkg = Package.open(self.path)
+        return [all_text(p).strip() for p in _tops(pkg.xml(_section(pkg)))]
+
+    def ask(self, queue: AskQueue, version: int, start: int, end: int, text: str) -> dict:
+        self._expect(version)
+        if start < 1:
+            raise EditError("첫 문단(쪽 설정)은 부탁 범위에 넣을 수 없어요. 둘째 문단부터 골라 주세요.", 400)
+        texts = self.texts()
+        if not start < end <= len(texts) or not text.strip():
+            raise EditError("고른 범위가 올바르지 않아요.", 400)
+        return queue.add(version, start, end, texts[start:end], text.strip())
+
+    def range_markdown(self, start: int, end: int) -> str:
+        md = to_markdown(Package.open(self.path), anchors=True)
+        out, keep = [], False
+        for line in md.splitlines():
+            if line.startswith("<!-- @") and line.endswith("-->"):
+                n = int(line[6:-3].strip())
+                keep = start <= n < end
+                continue
+            if keep:
+                out.append(line)
+        return "\n".join(out).strip() + "\n"
+
+    def apply(self, queue: AskQueue, ask_id: str, md: str, base_dir: Path) -> dict:
+        ask = queue.get(ask_id)
+        rng = locate(self.texts(), ask)
+        if rng is None:
+            msg = "부탁을 남긴 뒤 그 부분이 바뀌어서 어디에 반영할지 다시 확인이 필요해요."
+            queue.set(ask_id, "stale", msg)
+            return {"status": "stale", "message": msg, "version": self.version, "warnings": []}
+        warnings: list[str] = []
+
+        def mutate(pkg):
+            warnings.extend(render_into(pkg, infer(pkg), md, replace=rng, base_dir=Path(base_dir)))
+
+        try:
+            v = self.write(mutate)
+        except (RenderError, ValueError) as e:
+            queue.set(ask_id, "error", str(e))
+            return {"status": "error", "message": str(e), "version": self.version, "warnings": []}
+        queue.set(ask_id, "done")
+        return {"status": "done", "message": "", "version": v, "warnings": warnings}
 
 
 def _addr(tc) -> tuple[int, int]:
