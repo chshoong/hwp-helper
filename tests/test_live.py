@@ -16,6 +16,8 @@ class FakeRunner:
 
     def __call__(self, cmd, capture_output=True, timeout=None):
         args = json.loads(Path(cmd[cmd.index("-ArgsFile") + 1]).read_text(encoding="utf-8"))
+        if args.get("text_file"):  # 호출이 끝나면 임시 파일이 지워지므로 내용을 그때 기록
+            args["_text"] = Path(args["text_file"]).read_bytes().decode("utf-8")
         self.calls.append(args)
         out = json.dumps(self.results.pop(0), ensure_ascii=False).encode("utf-8")
         return subprocess.CompletedProcess(cmd, 0, stdout=out, stderr=b"")
@@ -245,3 +247,148 @@ def test_live_replace_middle_keeps_neighbors(live_doc, tmp_path):
     assert after[j] == texts[i][:5].strip()
     assert after[j + 1].endswith("끼운 첫 줄") and after[j + 2].endswith("끼운 둘째 줄")
     assert after[j + 3] == texts[i][12:].strip()
+
+
+@pytest.mark.hangul
+def test_live_replace_between_refuses_reversed_range(live_doc, tmp_path):
+    """C3: 끝 제목이 시작 제목보다 앞에 찾아지면 아무것도 지우지 않고 range_unsafe로 멈춘다."""
+    from hwpxkit.package import Package
+    name, _ = live_doc
+    before = _tops_text(Package.open(live.export(tmp_path / "b.hwpx", doc=name)))
+    with pytest.raises(live.LiveError, match="아무것도 지우지 않았어요"):
+        live.call("replace_between", doc=name, start="Ⅱ. 두 번째 장 제목", start_n=1,
+                  end="Ⅰ.", end_n=1, file=str(tmp_path / "없음.hwpx"))
+    assert _tops_text(Package.open(live.export(tmp_path / "a.hwpx", doc=name))) == before
+
+
+# ---- 최종 리뷰 반영 (데이터 손실 방지) ----
+
+def _doc(blank, tmp_path, lines, name="d.hwpx"):
+    from helpers import append_to_body, para
+    from hwpxkit.package import Package
+    pkg = Package.open(blank)
+    for item in lines:
+        append_to_body(pkg, item if not isinstance(item, str) else para(item))
+    return pkg.save(tmp_path / name)
+
+
+def test_section_stops_at_higher_level_heading(blank, tmp_path):
+    """C1: 1.2절을 다시 쓰면 다음 '제2장' 제목 앞에서 멈춘다 (2.1절까지 지우지 않는다)."""
+    from helpers import LONG
+    p = _doc(blank, tmp_path, ["제1장 서론", "1.1 배경", LONG, "1.2 목적", LONG, "제2장 방법", "2.1 자료", LONG])
+    start, _, end, _ = live.section_bounds(p, "1.2")
+    assert (start, end) == ("1.2 목적", "제2장 방법")
+
+
+def test_section_refuses_multi_section_document(blank, tmp_path):
+    """C3: 구역이 여러 개인 문서는 범위를 잘못 잡아 지울 수 있어 멈춘다."""
+    from helpers import LONG, add_section, para
+    from hwpxkit.package import Package
+    pkg = Package.open(_doc(blank, tmp_path, ["제1장 서론", LONG]))
+    add_section(pkg, para("제2장 방법"))
+    p = pkg.save(tmp_path / "two.hwpx")
+    with pytest.raises(live.LiveError, match="구역"):
+        live.section_bounds(p, "제1장")
+
+
+def test_section_skips_toc_without_page_numbers(blank, tmp_path):
+    """C3: 쪽 번호 없는 차례(제목만 줄줄이)도 건너뛰고 본문 제목을 고른다."""
+    from helpers import LONG
+    p = _doc(blank, tmp_path, ["제1장 서론", "제2장 방법", "제3장 결과", "제1장 서론", LONG, "제2장 방법", LONG,
+                               "제3장 결과", LONG])
+    start, n1, end, n2 = live.section_bounds(p, "제2장")
+    assert (start, n1, end, n2) == ("제2장 방법", 2, "제3장 결과", 2)
+
+
+def test_section_occurrence_counts_table_text(blank, tmp_path):
+    """C3: 한글 찾기는 표 칸 안 글도 세므로, 표 안에 같은 제목이 먼저 있으면 순번에 넣는다."""
+    from helpers import LONG, table
+    p = _doc(blank, tmp_path, [table(2, 2, texts={(0, 0): "구분", (1, 0): "제2장 방법"}), "제1장 서론", LONG,
+                               "제2장 방법", LONG, "제3장 결과", LONG])
+    assert live.section_bounds(p, "제2장")[1] == 2
+
+
+def test_section_requires_heading(blank, tmp_path):
+    """I1: 제목 없이 부르면 첫 장을 바꾸지 않고 멈춘다."""
+    p = _doc(blank, tmp_path, ["제1장 서론", "제2장 방법"])
+    with pytest.raises(live.LiveError, match="제목"):
+        live.section_bounds(p, "")
+
+
+def test_fragment_drops_other_sections(blank, tmp_path):
+    """C2: 화면 문서가 여러 구역이어도 조각에는 새 내용만 (뒤 구역이 따라 들어가지 않음)."""
+    from helpers import LONG, add_section, para
+    from hwpxkit.package import Package
+    from hwpxkit.reader import to_markdown
+    pkg = Package.open(_doc(blank, tmp_path, [LONG, LONG]))
+    add_section(pkg, para("뒤 구역 본문 글"))
+    screen = pkg.save(tmp_path / "screen.hwpx")
+    frag = Package.open(live.fragment("새 문장입니다.\n", screen, base_dir=tmp_path, before_para=None))
+    assert len(frag.section_names()) == 1
+    md = to_markdown(frag)
+    assert "새 문장입니다." in md and "뒤 구역 본문 글" not in md
+
+
+def test_fragment_strips_page_controls(blank, tmp_path):
+    """I5: 조각 첫 문단에 머리말·쪽 번호 같은 개체가 딸려 가지 않는다."""
+    from lxml import etree
+    from hwpxkit.ns import q
+    from hwpxkit.package import Package
+    from helpers import LONG
+    pkg = Package.open(_doc(blank, tmp_path, [LONG, LONG]))
+    first = next(p for p in pkg.edit(pkg.section_names()[0]) if p.tag == q("hp:p"))
+    ctrl = etree.SubElement(first.find(q("hp:run")), q("hp:ctrl"))
+    etree.SubElement(ctrl, q("hp:header"), {"id": "1", "applyPageType": "BOTH"})
+    screen = pkg.save(tmp_path / "screen.hwpx")
+    frag = Package.open(live.fragment("새 문장입니다.\n", screen, base_dir=tmp_path, before_para=None))
+    assert next(frag.xml(frag.section_names()[0]).iter(q("hp:header")), None) is None
+
+
+def test_replace_keeps_paragraph_break_at_end(fake):
+    """I4: 문단 끝까지 고른 선택을 바꿔도 다음 문단과 합쳐지지 않게 문단 나눔을 남긴다."""
+    r = fake({"ok": True, "selected": True, "text": "옛 문장\r\n", "para": 3, "list": 0, "in_table": False},
+             {"ok": True})
+    live.replace("새 문장")
+    assert r.calls[1]["_text"].endswith("\r\n")
+
+
+def test_insert_refuses_outside_body(fake):
+    """I9: 커서가 표 칸·각주·글상자 안이면 조각을 넣지 않는다."""
+    fake({"ok": True, "para": 0, "list": 7, "in_table": True})
+    with pytest.raises(live.LiveError, match="본문"):
+        live.insert("□ 새 항목\n")
+
+
+def test_modifying_timeout_mentions_partial_change(fake, monkeypatch):
+    """I7: 고치는 도중 시간 초과면 문서가 일부 바뀌었을 수 있다고 알린다."""
+    def slow(cmd, capture_output=True, timeout=None):
+        raise subprocess.TimeoutExpired(cmd, timeout)
+    monkeypatch.setattr(live, "_runner", slow)
+    with pytest.raises(live.LiveError, match="일부 바뀌었을 수"):
+        live.call("replace_between", start="제1장", start_n=1, end="", end_n=0, file="x")
+
+
+def test_fragment_actions_keep_backup(fake, monkeypatch, tmp_path):
+    """I2: 조각을 넣기 전 화면 문서를 되살리기용 사본으로 남기고 경로를 알려 준다."""
+    import shutil as _sh
+    from hwpxkit.presets import path as preset_path
+
+    def fake_export(out, doc=None):
+        _sh.copyfile(preset_path("gov-brief"), out)
+        return Path(out)
+    monkeypatch.setattr(live, "export", fake_export)
+    monkeypatch.setattr(live, "BACKUP_DIR", tmp_path / "backups")
+    fake({"ok": True, "para": 3, "list": 0, "in_table": False}, {"ok": True})
+    result = live.insert("□ 새 항목\n")
+    assert Path(result["backup"]).is_file() and Path(result["backup"]).parent == tmp_path / "backups"
+
+
+def test_cli_prints_backup_and_undo_hint(monkeypatch, tmp_path, capsys):
+    """I2: 조각을 넣은 뒤 되살리기용 사본 위치와, 되돌리기는 여러 번 눌러야 할 수 있다는 안내를 보여 준다."""
+    from hwpxkit.cli import main
+    md = tmp_path / "새.md"
+    md.write_text("□ 새 항목\n", encoding="utf-8")
+    monkeypatch.setattr(live, "insert", lambda *a, **k: {"warnings": [], "backup": "C:/tmp/사본.hwpx"})
+    assert main(["live", "insert", str(md)]) == 0
+    out = capsys.readouterr().out
+    assert "C:/tmp/사본.hwpx" in out and "여러 번" in out

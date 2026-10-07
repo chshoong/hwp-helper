@@ -347,7 +347,10 @@ def _cmd_live(args, workdir) -> int:
         print(f"'{r['start']}' 장을 바꿨어요." + (f" ('{r['end']}' 앞까지)" if r["end"] else " (문서 끝까지)"))
     for w in r["warnings"]:
         print(f"[주의] {w}")
-    print("저장은 하지 않았어요. 한글에서 확인 후 저장하거나, 되돌리기(Ctrl+Z)로 취소할 수 있어요.")
+    print("저장은 하지 않았어요. 한글에서 확인 후 저장하거나, 되돌리기(Ctrl+Z)로 취소할 수 있어요."
+          + (" 여러 단계로 넣었으니 되돌리기를 여러 번 눌러야 할 수 있어요." if r.get("backup") else ""))
+    if r.get("backup"):
+        print(f"바꾸기 전 화면 문서 사본: {r['backup']}")
     return 0
 
 

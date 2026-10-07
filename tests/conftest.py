@@ -73,12 +73,14 @@ def live_doc(tmp_path_factory):
         live.call("close_doc", doc=name)
     except live.LiveError:
         pass
-    for _ in range(30):  # 이 시험이 띄운 한글이 완전히 꺼질 때까지 (다음 시험이 꺼지는 한글에 붙지 않도록)
+    # close_doc은 시험 문서만 닫고 한글은 끄지 않는다: 이 시험이 띄운 한글만 끄고, 다 꺼질 때까지 기다린다
+    # (다음 시험이 꺼지는 한글에 붙지 않도록)
+    for pid in _hwp_pids() - before:
+        sp.run(["taskkill", "/PID", pid, "/F"], capture_output=True)
+    for _ in range(30):
         if not (_hwp_pids() - before):
             break
         time.sleep(0.5)
-    for pid in _hwp_pids() - before:  # 창을 닫아도 숨은 채 남는 경우: 이 시험이 띄운 한글만 끈다
-        sp.run(["taskkill", "/PID", pid, "/F"], capture_output=True)
 
 
 def _hwp_pids() -> set:

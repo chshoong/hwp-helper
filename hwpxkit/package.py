@@ -96,6 +96,14 @@ class Package:
         self._trees.pop(name, None)
         self._dirty.discard(name)
 
+    def remove(self, name: str) -> None:
+        """패키지에서 파일 하나를 뺀다 (매니페스트 정리는 부르는 쪽 몫)."""
+        for store in (self._raw, self._compress, self._trees):
+            store.pop(name, None)
+        self._dirty.discard(name)
+        if name in self._order:
+            self._order.remove(name)
+
     def save(self, path) -> Path:
         path = Path(path)
         if self.source is not None and path.resolve() == self.source.resolve():
