@@ -43,3 +43,29 @@ def pytest_collection_modifyitems(config, items):
     for item in items:
         if "hangul" in item.keywords:
             item.add_marker(skip)
+
+
+@pytest.fixture
+def live_doc(tmp_path_factory):
+    """사람이 연 것처럼 시험 문서를 한글로 연다(문서 이름 고유). 끝나면 그 문서만 닫는다."""
+    import subprocess as sp
+    import time
+    from hwpxkit import live
+    from hwpxkit.presets import path as preset_path
+    folder = tmp_path_factory.mktemp("live")
+    name = f"livetest_{int(time.time() * 1000)}.hwpx"
+    doc = folder / name
+    shutil.copyfile(preset_path("gov-brief"), doc)
+    sp.Popen([str(live.hwp_exe()), str(doc)])
+    for _ in range(40):
+        time.sleep(0.5)
+        try:
+            if any(name in d for d in live.status()["docs"]):
+                break
+        except live.LiveError:
+            pass
+    yield name, doc
+    try:
+        live.call("close_doc", doc=name)
+    except live.LiveError:
+        pass
