@@ -56,6 +56,7 @@ def live_doc(tmp_path_factory):
     name = f"livetest_{int(time.time() * 1000)}.hwpx"
     doc = folder / name
     shutil.copyfile(preset_path("gov-brief"), doc)
+    before = _hwp_pids()
     sp.Popen([str(live.hwp_exe()), str(doc)])
     for _ in range(40):
         time.sleep(0.5)
@@ -69,3 +70,15 @@ def live_doc(tmp_path_factory):
         live.call("close_doc", doc=name)
     except live.LiveError:
         pass
+    for _ in range(30):  # 이 시험이 띄운 한글이 완전히 꺼질 때까지 (다음 시험이 꺼지는 한글에 붙지 않도록)
+        if not (_hwp_pids() - before):
+            break
+        time.sleep(0.5)
+    for pid in _hwp_pids() - before:  # 창을 닫아도 숨은 채 남는 경우: 이 시험이 띄운 한글만 끈다
+        sp.run(["taskkill", "/PID", pid, "/F"], capture_output=True)
+
+
+def _hwp_pids() -> set:
+    import subprocess as sp
+    out = sp.run(["tasklist", "/FI", "IMAGENAME eq Hwp.exe", "/FO", "CSV", "/NH"], capture_output=True).stdout
+    return {line.split('","')[1] for line in out.decode("cp949", errors="replace").splitlines() if '","' in line}

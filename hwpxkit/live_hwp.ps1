@@ -17,11 +17,27 @@ public static class HwpRot {
 '@
 
 $a = Get-Content -Raw -Encoding UTF8 $ArgsFile | ConvertFrom-Json
-$all = [HwpRot]::All()
-if ($all.Count -eq 0) { Emit @{ ok = $false; error = "not_running" }; exit 0 }
-$h = $all[0]
-$docs = @(); for ($i = 0; $i -lt $h.XHwpDocuments.Count; $i++) { $docs += [string]$h.XHwpDocuments.Item($i).FullName }
-if ($docs.Count -eq 0) { Emit @{ ok = $false; error = "not_running" }; exit 0 }
+# 실행 중 개체 목록에는 사용자 한글 말고도 변환용 한글(창 없음)이 같은 이름으로 있을 수 있다.
+# 창이 보이고 이름 있는 문서를 연 한글만 사용자 한글로 본다. --doc이 있으면 그 문서를 연 한글.
+function DocsOf($x) { $d = @(); for ($i = 0; $i -lt $x.XHwpDocuments.Count; $i++) { $d += [string]$x.XHwpDocuments.Item($i).FullName }; ,$d }
+$cands = @()
+foreach ($x in [HwpRot]::All()) {
+  try {
+    $visible = $false; try { $visible = [bool]$x.XHwpWindows.Item(0).Visible } catch {}
+    $named = @(DocsOf $x | Where-Object { $_ })
+    if ($visible -and $named.Count -gt 0) { $cands += $x }
+  } catch {}
+}
+if ($a.doc) {
+  $match = @($cands | Where-Object { @(DocsOf $_ | Where-Object { $_ -like "*$($a.doc)*" }).Count -gt 0 })
+  if ($match.Count -gt 0) { $cands = $match }
+}
+if ($cands.Count -eq 0) {
+  if ($a.action -eq "close_doc") { Emit @{ ok = $true; quit = $false }; exit 0 }
+  Emit @{ ok = $false; error = "not_running" }; exit 0
+}
+$h = $cands[0]
+$docs = @(DocsOf $h | Where-Object { $_ })
 
 if ($a.doc) {
   $hit = @(); for ($i = 0; $i -lt $docs.Count; $i++) { if ($docs[$i] -like "*$($a.doc)*") { $hit += $i } }
@@ -58,9 +74,12 @@ try {
     }
     "close_doc" {
       # 시험 정리용: --doc으로 고른 시험 문서만 저장하지 않고 닫는다. 남은 문서가 없으면 한글을 끈다.
-      $null = $h.XHwpDocuments.Active_XHwpDocument.Close($false)
-      if ($h.XHwpDocuments.Count -eq 1 -and -not [string]$h.XHwpDocuments.Item(0).FullName) { $null = $h.Quit() }
-      Emit @{ ok = $true }
+      if ($a.doc) { $null = $h.XHwpDocuments.Active_XHwpDocument.Close($false) }
+      Start-Sleep -Milliseconds 500
+      $named = 0; for ($i = 0; $i -lt $h.XHwpDocuments.Count; $i++) { if ([string]$h.XHwpDocuments.Item($i).FullName) { $named++ } }
+      $quit = ($named -eq 0)
+      if ($quit) { $null = $h.Quit() }
+      Emit @{ ok = $true; quit = $quit }
     }
     "select_test" {
       # 시험용: 사람이 드래그한 것처럼 para 문단의 start~end 글자를 선택한다.
