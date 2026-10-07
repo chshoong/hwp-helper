@@ -44,8 +44,11 @@ if ($a.doc) {
   $hit = @(); for ($i = 0; $i -lt $allDocs.Count; $i++) { if ($allDocs[$i] -and $allDocs[$i] -like "*$($a.doc)*") { $hit += $i } }
   if ($hit.Count -eq 0) { Emit @{ ok = $false; error = "doc_not_found"; docs = $docs }; exit 0 }
   if ($hit.Count -gt 1) { Emit @{ ok = $false; error = "doc_ambiguous"; docs = @($hit | ForEach-Object { $allDocs[$_] }) }; exit 0 }
-  $null = $h.XHwpDocuments.Item($hit[0]).SetActive_XHwpDocument()
-  Start-Sleep -Milliseconds 300   # 문서 전환이 끝난 뒤 명령
+  # 이미 활성인 문서를 다시 활성화하면 사용자의 선택이 풀릴 수 있어, 다른 문서일 때만 전환한다
+  if ([string]$h.Path -ne $allDocs[$hit[0]]) {
+    $null = $h.XHwpDocuments.Item($hit[0]).SetActive_XHwpDocument()
+    Start-Sleep -Milliseconds 300   # 문서 전환이 끝난 뒤 명령
+  }
 }
 
 function Find-Text($text, $times) {
