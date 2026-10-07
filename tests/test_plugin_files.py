@@ -53,4 +53,4 @@ def test_documented_commands_exist():
 def test_documented_options_exist():
     text = "\n".join(p.read_text(encoding="utf-8") for p in [SKILL / "SKILL.md", *(SKILL / "reference").glob("*.md")])
     for opt in set(re.findall(r"(--[a-z]+)", text)):
-        assert opt in ("--anchors", "--json", "--mode", "--replace", "--preview", "--user", "--fit"), opt
+        assert opt in ("--anchors", "--json", "--mode", "--replace", "--preview", "--user", "--fit", "--doc", "--memo", "--heading"), opt

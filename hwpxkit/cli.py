@@ -297,6 +297,60 @@ def _cmd_presets(args, workdir) -> int:
     return 0
 
 
+def _cmd_live(args, workdir) -> int:
+    from . import live
+    act, doc = args.live_action, args.doc
+    if act == "status":
+        st = live.status(doc)
+        if args.json:
+            print(json.dumps(st, ensure_ascii=False))
+            return 0
+        print(f"지금 문서: {Path(st['active']).name}" + (" (수정됨, 저장 안 함)" if st["modified"] else ""))
+        if len(st["docs"]) > 1:
+            print("열린 문서: " + ", ".join(Path(d).name for d in st["docs"]))
+        print("선택한 부분: " + ("있음" if st["selection"] else "없음"))
+        return 0
+    if act == "selection":
+        sel = live.selection(doc)
+        if args.json:
+            print(json.dumps(sel, ensure_ascii=False))
+        elif not sel["selected"]:
+            print("선택한 부분이 없어요.")
+        else:
+            where = "표 칸 안" if sel["in_table"] else "본문"
+            print(f"[{where} · {sel['paragraphs']}문단 · {sel['para']}번째 문단]\n{sel['text']}")
+        return 0
+    if act == "export":
+        print(f"내보냈어요(창은 그대로): {live.export(Path(args.target), doc)}")
+        return 0
+    if act == "review":
+        r = live.review(doc, memo=args.memo)
+        for f in r["findings"]:
+            print(f"[{f.level}] {f.message}")
+        if not r["findings"]:
+            print("확인할 것이 없어요.")
+        if args.memo:
+            print(f"한글 메모 {r['placed']}개를 달았어요." + (f" 위치를 못 찾은 것: {', '.join(r['missed'])}" if r["missed"] else ""))
+        return 0
+    md_path = Path(args.target)
+    if not md_path.is_file():
+        raise PackageError(f"내용 파일을 찾을 수 없어요: {md_path}")
+    md = md_path.read_text(encoding="utf-8-sig")
+    if act == "replace":
+        r = live.replace(md, doc, base_dir=md_path.parent)
+        print("선택한 부분을 바꿨어요." + (" (여러 문단: 양식 서식으로)" if r["mode"] == "fragment" else ""))
+    elif act == "insert":
+        r = live.insert(md, doc, base_dir=md_path.parent)
+        print("커서가 있는 문단 다음에 넣었어요.")
+    else:  # section
+        r = live.section(args.heading, md, doc, base_dir=md_path.parent)
+        print(f"'{r['start']}' 장을 바꿨어요." + (f" ('{r['end']}' 앞까지)" if r["end"] else " (문서 끝까지)"))
+    for w in r["warnings"]:
+        print(f"[주의] {w}")
+    print("저장은 하지 않았어요. 한글에서 확인 후 저장하거나, 되돌리기(Ctrl+Z)로 취소할 수 있어요.")
+    return 0
+
+
 def _parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="hwpxkit", description="HWPX 문서 도구")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -357,6 +411,14 @@ def _parser() -> argparse.ArgumentParser:
     s = sub.add_parser("presets", help="양식 없이 쓸 수 있는 프리셋 목록")
     s.add_argument("--json", action="store_true")
     s.set_defaults(func=_cmd_presets)
+    s = sub.add_parser("live", help="열린 한글 창의 문서를 저장 없이 읽고 고치기 (한글 필요)")
+    s.add_argument("live_action", choices=["status", "selection", "replace", "insert", "export", "review", "section"])
+    s.add_argument("target", nargs="?", default="", help="내용 .md (replace/insert/section) 또는 결과 .hwpx (export)")
+    s.add_argument("--heading", default="", help="section: 바꿀 장의 제목 글 (예: 제2장)")
+    s.add_argument("--doc", default=None, help="열린 문서가 여러 개일 때 문서 이름 일부")
+    s.add_argument("--memo", action="store_true", help="review: 지적 사항을 한글 메모로 달기")
+    s.add_argument("--json", action="store_true")
+    s.set_defaults(func=_cmd_live)
     return p
 
 
