@@ -161,3 +161,14 @@ def test_default_table_has_room_in_cells(blank):
     tbl = next(pkg.xml(SECTION).iter(q("hp:tbl")))
     m = tbl.find(q("hp:inMargin"))
     assert int(m.get("top")) >= 283 and int(m.get("bottom")) >= 283
+
+
+def test_chapter_number_comes_from_heading_text(blank):
+    """첫 장이 '제2장'이면 표 번호는 [표 2-1] (장 수를 세지 않고 제목의 번호를 쓴다)."""
+    from helpers import report_template
+    pkg = Package.open(blank)
+    report_template(pkg)
+    render_into(pkg, infer(pkg), "# 제2장 연구 수행 결과\n\n" + TABLE_MD)
+    tbl = next(pkg.xml(SECTION).iter(q("hp:tbl")))
+    assert all_text(tbl.find(q("hp:caption"))) == "[표 2-1] 평가 지표"
+    assert any("[표 2-1]에 정리했다" in own_text(p) for p in tops(pkg))

@@ -29,6 +29,16 @@ from .samples import BODY_FROM, EQ_NUMBER, Catalog, ParaStyle
 _SYMBOL = {1: "□", 2: "○", 3: "-", 4: "·"}
 _LEAD_RE = re.compile(r"^(\s*)(\S)(\s+)$")
 # '다음 문단과 함께'를 켤 역할: 장·절 제목, 그리고 □ (개조식 양식에서는 □가 장 제목 노릇을 한다)
+_ROMAN = {"Ⅰ": 1, "Ⅱ": 2, "Ⅲ": 3, "Ⅳ": 4, "Ⅴ": 5, "Ⅵ": 6, "Ⅶ": 7, "Ⅷ": 8, "Ⅸ": 9, "Ⅹ": 10}
+
+
+def _chapter_number(text: str) -> int | None:
+    m = re.match(r"\s*(?:제\s*(\d+)\s*장|(\d+)\s*\.(?!\d)|([ⅠⅡⅢⅣⅤⅥⅦⅧⅨⅩ])\s*\.)", text)
+    if not m:
+        return None
+    return int(m.group(1) or m.group(2)) if (m.group(1) or m.group(2)) else _ROMAN[m.group(3)]
+
+
 _GOTHIC = ("맑은 고딕", "함초롬돋움", "한양중고딕", "나눔고딕", "돋움", "굴림")
 _KEEP_WITH_NEXT = {"h1", "h2", "h3", "h4", "h5", "bullet1"}
 
@@ -104,7 +114,8 @@ class Renderer:
         counters: Counter = Counter({k: n for k, n in self._start.items() if "{c}" not in self._fmt(k)})
         for b in blocks:
             if isinstance(b, Heading) and b.level == 1:
-                chapter += 1
+                # 제목에 장 번호가 적혀 있으면 그 번호('제2장', '2.', 'Ⅲ.'), 없으면 차례로 센다
+                chapter = _chapter_number("".join(sp.text for sp in b.spans)) or chapter + 1
                 for kind in list(counters):
                     if "{c}" in self._fmt(kind):
                         counters[kind] = 0
