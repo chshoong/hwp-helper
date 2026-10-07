@@ -92,3 +92,15 @@ def test_heading_font_is_not_font_mix(blank):
     for _ in range(4):
         append_to_body(pkg, para(LONG * 3))
     assert [f for f in review(pkg) if f.code == "font-mix"] == []
+
+
+def test_bullet_with_children_keeps_with_next(blank):
+    """바로 아래 더 깊은 글머리가 오는 ◦ 줄(소제목 노릇)은 쪽 끝에 홀로 남지 않게 한다."""
+    pkg = gov_form(blank)
+    render_into(pkg, infer(pkg), "○ 소제목 노릇을 하는 줄\n- 세부 내용\n○ 혼자 있는 줄\n")
+    h = Header(pkg)
+    def keep(text):
+        p = next(p for p in body_tops(pkg) if own_text(p).strip().endswith(text))
+        return h.get("paraPr", p.get("paraPrIDRef")).find(q("hh:breakSetting")).get("keepWithNext")
+    assert keep("소제목 노릇을 하는 줄") == "1"
+    assert keep("혼자 있는 줄") == "0"

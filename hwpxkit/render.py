@@ -66,6 +66,7 @@ class Renderer:
         self._last_blank = True
         self._last_role: str | None = None
         self._keep_cache: dict[str, str] = {}
+        self._keep_this = False
         self.equation_count = 0
 
     @property
@@ -75,7 +76,10 @@ class Renderer:
     def build(self, blocks) -> list[etree._Element]:
         self._assign_numbers(blocks)
         out: list[etree._Element] = []
-        for b in blocks:
+        for i, b in enumerate(blocks):
+            nxt = blocks[i + 1] if i + 1 < len(blocks) else None
+            # 바로 아래에 더 깊은 글머리가 오는 글머리 줄은 소제목 노릇을 하므로 쪽 끝에 홀로 남지 않게
+            self._keep_this = isinstance(b, Bullet) and isinstance(nxt, Bullet) and nxt.level > b.level
             out.extend(self._block(b))
         for el in out:
             strip_lineseg(el)
@@ -180,7 +184,7 @@ class Renderer:
         # 양식에서 이 역할 앞에 빈 줄이 있으면, 묶음이 바뀔 때만 넣는다 (같은 단계가 이어지면 넣지 않음)
         if st.spacer is not None and not self._last_blank and self._last_role != role:
             out.append(self._make_p(st.spacer, []))
-        if role in _KEEP_WITH_NEXT and self._keep_headings:
+        if (role in _KEEP_WITH_NEXT or self._keep_this) and self._keep_headings:
             st = replace(st, para_pr=self._keep_with_next(st.para_pr))
         out.append(self._make_p(st, spans))
         self._last_blank = False
@@ -280,7 +284,12 @@ class Renderer:
         sid = self.h.style_id("캡션")
         if sid is not None:
             e = self.h.get("style", sid)
-            return ParaStyle(e.get("paraPrIDRef"), sid, e.get("charPrIDRef"))
+            char = e.get("charPrIDRef")
+            # 양식이 손대지 않은 한글 기본 '캡션' 스타일은 함초롬바탕이다. 본문 글꼴과 다르면 본문 글꼴로 맞춘다
+            body_face = self.h.charpr_faces(self.cat.require("body").char_pr)["HANGUL"]
+            if body_face and self.h.charpr_faces(char)["HANGUL"] != body_face:
+                char = self.h.derive_font(char, body_face)
+            return ParaStyle(e.get("paraPrIDRef"), sid, char)
         return self.cat.require(role)
 
     def _new_caption(self, role: str, text: str, auto, width: int, side: str) -> etree._Element:

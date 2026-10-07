@@ -172,3 +172,16 @@ def test_chapter_number_comes_from_heading_text(blank):
     tbl = next(pkg.xml(SECTION).iter(q("hp:tbl")))
     assert all_text(tbl.find(q("hp:caption"))) == "[표 2-1] 평가 지표"
     assert any("[표 2-1]에 정리했다" in own_text(p) for p in tops(pkg))
+
+
+def test_caption_follows_body_font_when_no_caption_sample(blank):
+    """캡션 견본이 없으면 한글 기본 '캡션' 스타일(함초롬바탕) 대신 본문 글꼴로 맞춘다."""
+    pkg = Package.open(blank)
+    body = Header(pkg).derive_font("0", "휴먼명조")
+    append_to_body(pkg, para(LONG, char_pr=body))
+    append_to_body(pkg, para(LONG, char_pr=body))
+    render_into(pkg, infer(pkg), TABLE_MD)
+    h = Header(pkg)
+    cap = next(pkg.xml(SECTION).iter(q("hp:caption")))
+    run = next(cap.iter(q("hp:run")))
+    assert h.charpr_faces(run.get("charPrIDRef"))["HANGUL"] == "휴먼명조"
