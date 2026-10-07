@@ -5,6 +5,7 @@ import os
 import shutil
 import tempfile
 import threading
+import time
 from pathlib import Path
 from typing import Callable
 
@@ -58,6 +59,7 @@ class EditDoc:
                 shutil.copyfile(self.src, self.path)
         self.version = 1
         self._stamp = self._stat()
+        self._ext_dirty = False  # 마지막 쓰기 뒤 다른 프로그램(한글)이 사본을 바꿨는지
 
     def _stat(self) -> tuple[float, int]:
         st = self.path.stat()
@@ -66,16 +68,24 @@ class EditDoc:
     def check_external(self) -> bool:
         """한글 등 다른 프로그램이 사본을 바꿨으면 판 번호를 올리고 한 번만 알린다."""
         with self.lock:
-            now = self._stat()
-            if now != self._stamp:
-                self._stamp = now
-                self.version += 1
-                return True
-            return False
+            return self._sync_external()
+
+    def _sync_external(self) -> bool:  # 잠금 안에서 부른다
+        now = self._stat()
+        if now != self._stamp:
+            self._stamp = now
+            self.version += 1
+            self._ext_dirty = True
+            return True
+        return False
+
+    def _open(self) -> Package:
+        with self.lock:
+            return Package.open(self.path)
 
     def doc(self) -> dict:
         changed = self.check_external()
-        pkg = Package.open(self.path)
+        pkg = self._open()
         h = Header(pkg)
         chars = bullet_chars(h)
         names = pkg.section_names()
@@ -92,8 +102,9 @@ class EditDoc:
                     blocks.append({"i": i, "kind": "object", "text": "[그림·수식]"})
                     continue
             role, _ = classify(p, h, chars, levels)
+            flat = any(len(t) > 0 for t in p.iter(q("hp:t")))  # 탭·줄바꿈 등: 고치면 글로만 남음
             blocks.append({"i": i, "kind": "para", "role": role or "other", "text": own_text(p),
-                           **_looks(p, h)})
+                           "flat": flat, **_looks(p, h)})
         return {"version": self.version, "name": self.path.name, "external_change": changed,
                 "sections": len(names), "blocks": blocks}
 
@@ -104,6 +115,8 @@ class EditDoc:
     def write(self, mutate: Callable[[Package], None], version: int | None = None, history: bool = True) -> int:
         """잠금 안에서 열기 → mutate → 이력 저장 → 사본 바꾸기 → 판 번호 올림. mutate가 실패하면 아무것도 안 바뀐다."""
         with self.lock:
+            if self._sync_external() and version is not None:
+                raise EditError("한글 등에서 사본이 바뀌었어요. 새로 불러올게요.", 409)
             if version is not None:
                 self._expect(version)
             pkg = Package.open(self.path)
@@ -117,7 +130,7 @@ class EditDoc:
                 hist = None
                 if history:
                     self.history_dir.mkdir(exist_ok=True)
-                    hist = self.history_dir / f"{self.version:05d}.hwpx"
+                    hist = self.history_dir / f"{_next_number(self.history_dir):05d}.hwpx"
                     shutil.copyfile(self.path, hist)
                 try:
                     _replace(tmp, self.path)
@@ -132,6 +145,7 @@ class EditDoc:
                     old.unlink()
             self.version += 1
             self._stamp = self._stat()
+            self._ext_dirty = False
             return self.version
 
     def edit_para(self, version: int, i: int, text: str) -> int:
@@ -156,11 +170,14 @@ class EditDoc:
         def mutate(pkg):
             ps = _tops(pkg.edit(_section(pkg)))
             tbl = next(ps[i].iter(q("hp:tbl")), None) if 0 <= i < len(ps) else None
-            tc = None if tbl is None else next((tc for tc in tbl.iter(q("hp:tc")) if _addr(tc) == (r, c)), None)
+            cells = [] if tbl is None else [tc for tr in tbl.findall(q("hp:tr")) for tc in tr.findall(q("hp:tc"))]
+            tc = next((tc for tc in cells if _addr(tc) == (r, c)), None)  # 이 표의 칸만 (안쪽 표 제외)
             if tc is None:
                 raise EditError("그 칸을 찾지 못했어요. 새로 불러올게요.", 409)
             sub = tc.find(q("hp:subList"))
             cps = sub.findall(q("hp:p"))
+            if any(next(cp.iter(q(t)), None) is not None for cp in cps for t in ("hp:tbl", "hp:pic", "hp:equation")):
+                raise EditError("표·그림이 든 칸은 글을 고칠 수 없어요. '부탁하기'로 남겨 주세요.", 400)
             first = cps[0]
             for extra in cps[1:]:
                 sub.remove(extra)
@@ -173,7 +190,7 @@ class EditDoc:
 
         return self.write(mutate, version)
 
-    def undo(self) -> int:
+    def undo(self, version: int | None = None) -> int:
         hist = sorted(self.history_dir.glob("*.hwpx")) if self.history_dir.exists() else []
         if not hist:
             raise EditError("되돌릴 단계가 없어요.", 400)
@@ -181,19 +198,22 @@ class EditDoc:
         restored = Package.open(last)
 
         def mutate(pkg):
+            if self._ext_dirty:  # 한글에서 고친 상태는 되돌리기 전에 따로 남긴다
+                rescue = self.history_dir / "외부"
+                rescue.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(self.path, rescue / f"{time.strftime('%Y%m%d-%H%M%S')}.hwpx")
             for name in pkg.names():
                 pkg.remove(name)
             for name in restored.names():
                 pkg.write(name, restored.read(name))
 
         # 되돌리기는 이력을 새로 남기지 않고, 되살린 이력을 지운다: 거듭하면 더 옛 판으로 간다
-        v = self.write(mutate, history=False)
+        v = self.write(mutate, version, history=False)
         last.unlink(missing_ok=True)
         return v
 
     def texts(self) -> list[str]:
-        pkg = Package.open(self.path)
-        return [all_text(p).strip() for p in _tops(pkg.xml(_section(pkg)))]
+        return _texts(self._open())
 
     def ask(self, queue: AskQueue, version: int, start: int, end: int, text: str) -> dict:
         self._expect(version)
@@ -205,7 +225,7 @@ class EditDoc:
         return queue.add(version, start, end, texts[start:end], text.strip())
 
     def range_markdown(self, start: int, end: int) -> str:
-        md = to_markdown(Package.open(self.path), anchors=True)
+        md = to_markdown(self._open(), anchors=True)
         out, keep = [], False
         for line in md.splitlines():
             if line.startswith("<!-- @") and line.endswith("-->"):
@@ -218,23 +238,39 @@ class EditDoc:
 
     def apply(self, queue: AskQueue, ask_id: str, md: str, base_dir: Path) -> dict:
         ask = queue.get(ask_id)
-        rng = locate(self.texts(), ask)
-        if rng is None:
-            msg = "부탁을 남긴 뒤 그 부분이 바뀌어서 어디에 반영할지 다시 확인이 필요해요."
-            queue.set(ask_id, "stale", msg)
-            return {"status": "stale", "message": msg, "version": self.version, "warnings": []}
         warnings: list[str] = []
 
-        def mutate(pkg):
+        def mutate(pkg):  # 범위 찾기와 바꾸기를 같은 잠금 안에서 (그 사이 고치기가 끼지 않게)
+            rng = locate(_texts(pkg), ask)
+            if rng is None:
+                raise _Stale()
             warnings.extend(render_into(pkg, infer(pkg), md, replace=rng, base_dir=Path(base_dir)))
 
         try:
             v = self.write(mutate)
+        except _Stale:
+            msg = "부탁을 남긴 뒤 그 부분이 바뀌어서 어디에 반영할지 다시 확인이 필요해요."
+            queue.set(ask_id, "stale", msg)
+            return {"status": "stale", "message": msg, "version": self.version, "warnings": []}
         except (RenderError, ValueError) as e:
             queue.set(ask_id, "error", str(e))
             return {"status": "error", "message": str(e), "version": self.version, "warnings": []}
         queue.set(ask_id, "done")
         return {"status": "done", "message": "", "version": v, "warnings": warnings}
+
+
+class _Stale(Exception):
+    pass
+
+
+def _texts(pkg: Package) -> list[str]:
+    return [all_text(p).strip() for p in _tops(pkg.xml(_section(pkg)))]
+
+
+def _next_number(folder: Path) -> int:
+    """이력 파일 번호: 이미 있는 것 중 가장 큰 번호 다음 (서버를 다시 켜도 이어짐)."""
+    nums = [int(f.stem) for f in folder.glob("*.hwpx") if f.stem.isdigit()]
+    return max(nums, default=0) + 1
 
 
 def _addr(tc) -> tuple[int, int]:

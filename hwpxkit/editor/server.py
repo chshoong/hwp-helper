@@ -12,6 +12,7 @@ import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+from ..package import PackageError
 from .doc import EditDoc, EditError
 from .queue import AskQueue
 
@@ -72,6 +73,8 @@ def make_server(doc: EditDoc, queue: AskQueue, key: str, *, port: int = 0, idle:
                 return self._dispatch(method, url.path, body)
             except EditError as e:
                 return self._send(e.status, {"error": str(e)})
+            except (OSError, PackageError):
+                return self._send(423, {"error": "사본을 다른 프로그램이 쓰는 중이에요. 잠시 뒤 다시 시도해 주세요."})
             except (KeyError, TypeError, ValueError) as e:
                 return self._send(400, {"error": f"요청을 이해하지 못했어요: {e}"})
 
@@ -101,7 +104,8 @@ def make_server(doc: EditDoc, queue: AskQueue, key: str, *, port: int = 0, idle:
                 return self._send(200, doc.apply(queue, str(body["id"]), str(body["md"]),
                                                  Path(body.get("base_dir") or base_dir or doc.path.parent)))
             if method == "POST" and path == "/api/undo":
-                return self._send(200, {"version": doc.undo()})
+                v = body.get("version")
+                return self._send(200, {"version": doc.undo(None if v is None else int(v))})
             if method == "POST" and path == "/api/pages":
                 from .. import bridge
                 if not bridge.available():
@@ -147,8 +151,10 @@ def serve(src: Path, idle: float = 7200) -> None:
     key = secrets.token_urlsafe(16)
     srv = make_server(doc, queue, key, idle=idle, base_dir=doc.path.parent)
     state = state_path(doc.path)
-    state.write_text(json.dumps({"port": srv.server_address[1], "key": key, "pid": os.getpid(), "url": srv.url},
-                                ensure_ascii=False), encoding="utf-8")
+    tmp = state.with_suffix(".tmp")
+    tmp.write_text(json.dumps({"port": srv.server_address[1], "key": key, "pid": os.getpid(), "url": srv.url},
+                              ensure_ascii=False), encoding="utf-8")
+    tmp.replace(state)  # 한 번에 바꿔 읽는 쪽이 반쯤 쓴 파일을 보지 않게
     watch_idle(srv)
     try:
         srv.serve_forever()

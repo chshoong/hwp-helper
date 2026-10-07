@@ -464,3 +464,139 @@ def test_skill_documents_edit():
     for cmd in ("edit start", "edit watch", "edit asks", "edit apply", "edit stop"):
         assert cmd in text, cmd
     assert "reference/editor.md" in (root / "SKILL.md").read_text(encoding="utf-8")
+
+
+# ---- 최종 리뷰 반영 ----
+
+def test_undo_after_restart_restores_latest(blank, tmp_path):
+    """C1: 서버를 다시 켜도(새 EditDoc) 되돌리기는 바로 앞 상태로 간다."""
+    from hwpxkit.editor import EditDoc
+    src = make_doc(blank, tmp_path)
+    d1 = EditDoc(src)
+    for k in range(3):
+        d1.edit_para(d1.version, 2, f"첫 세션 {k}")
+    d2 = EditDoc(src)
+    d2.edit_para(d2.version, 2, "둘째 세션")
+    d2.undo(d2.version)
+    assert own_text(tops(d2.path)[2]) == "첫 세션 2"
+    d2.undo(d2.version)
+    assert own_text(tops(d2.path)[2]) == "첫 세션 1"
+
+
+def test_cli_asks_uses_current_range(blank, tmp_path, capsys):
+    """C2: 앞 부탁을 반영해 문단 수가 바뀌어도 뒤 부탁의 마크다운은 지금 자리에서 읽는다."""
+    from hwpxkit.editor import AskQueue, EditDoc
+    src = make_doc(blank, tmp_path)
+    d = EditDoc(src)
+    qu = AskQueue.for_copy(d.path)
+    d.ask(qu, 1, 2, 3, "늘려줘")
+    d.ask(qu, 1, 5, 6, "셋째를 줄여줘")
+    d.apply(qu, "a1", "늘린 문단 하나\n\n늘린 문단 둘\n\n늘린 문단 셋\n", tmp_path)
+    assert _cli("asks", src, "--json") == 0
+    asks = json.loads(capsys.readouterr().out)
+    assert [a["id"] for a in asks] == ["a2"] and "셋째 본문" in asks[0]["markdown"]
+
+
+def _nested_doc(blank, tmp_path):
+    pkg = Package.open(blank)
+    outer = append_to_body(pkg, table(2, 2, texts={(1, 0): "바깥", (1, 1): "칸"}))
+    inner = table(2, 2, texts={(1, 0): "안쪽"})
+    first_cell = next(outer.iter(q("hp:tc")))
+    first_cell.find(q("hp:subList")).append(inner)
+    append_to_body(pkg, para(LONG))
+    return pkg.save(tmp_path / "겹표.hwpx")
+
+
+def test_edit_cell_ignores_nested_table(blank, tmp_path):
+    """C3: 바깥 표 칸을 고치면 안쪽 표가 아니라 바깥 칸이 바뀐다."""
+    from hwpxkit.editor import EditDoc
+    d = EditDoc(_nested_doc(blank, tmp_path))
+    d.edit_cell(1, 1, 1, 0, "고친 바깥")
+    from hwpxkit.body import all_text
+    p = tops(d.path)[1]
+    assert "고친 바깥" in all_text(p) and "안쪽" in all_text(p)
+
+
+def test_edit_cell_keeps_objects_in_cell(blank, tmp_path):
+    """C3: 칸 안에 표·그림 문단이 있으면 그 칸 글 고치기가 개체를 지우지 않는다."""
+    from hwpxkit.editor import EditDoc, EditError
+    d = EditDoc(_nested_doc(blank, tmp_path))
+    with pytest.raises(EditError, match="표·그림"):
+        d.edit_cell(1, 1, 0, 0, "덮어쓰기")
+    assert sum(1 for _ in tops(d.path)[1].iter(q("hp:tbl"))) == 2
+
+
+def _replace_externally(d, tmp_path, text):
+    pkg = Package.open(d.path)
+    [p for p in pkg.edit(SECTION) if p.tag == q("hp:p")][2].find(q("hp:run")).find(q("hp:t")).text = text
+    tmp = pkg.save(tmp_path / "ext.hwpx")
+    time.sleep(0.05)
+    tmp.replace(d.path)
+
+
+def test_write_detects_external_change(blank, tmp_path):
+    """I1: 화면이 새로 불러오기 전이라도 한글에서 바뀐 사본에는 옛 판으로 쓰지 않는다."""
+    from hwpxkit.editor import EditDoc, EditError
+    d = EditDoc(make_doc(blank, tmp_path))
+    _replace_externally(d, tmp_path, "한글에서 고침")
+    with pytest.raises(EditError) as e:
+        d.edit_para(1, 3, "옛 판에서 고침")
+    assert e.value.status == 409
+    assert own_text(tops(d.path)[2]) == "한글에서 고침"
+
+
+def test_undo_after_external_change_keeps_rescue_copy(blank, tmp_path):
+    """I2: 한글에서 고친 뒤 되돌리기를 해도 한글에서 고친 상태를 따로 남긴다."""
+    from hwpxkit.editor import EditDoc
+    d = EditDoc(make_doc(blank, tmp_path))
+    d.edit_para(1, 2, "화면에서 고침")
+    _replace_externally(d, tmp_path, "한글에서 고침")
+    d.doc()
+    d.undo(d.version)
+    rescue = list((d.history_dir / "외부").glob("*.hwpx"))
+    assert len(rescue) == 1
+    assert "한글에서 고침" in [own_text(p) for p in tops(rescue[0])]
+
+
+def test_server_maps_file_errors_to_json(server, monkeypatch):
+    """I3: 사본을 읽다 막혀도 연결을 끊지 않고 한국어 오류를 돌려준다."""
+    from hwpxkit.editor import doc as docmod
+    srv, _ = server
+
+    def busy(*a, **k):
+        raise PermissionError("busy")
+    monkeypatch.setattr(docmod.Package, "open", busy)
+    st, r = call(srv, "GET", "/api/doc")
+    assert st == 423 and "잠시 뒤" in r["error"]
+
+
+def test_doc_marks_paragraph_with_tabs(blank, tmp_path):
+    """I4: 탭·줄바꿈이 든 문단은 고치면 사라짐을 화면이 알 수 있게 표시한다."""
+    from hwpxkit.editor import EditDoc
+    pkg = Package.open(blank)
+    p = para("1.")
+    t = p.find(q("hp:run")).find(q("hp:t"))
+    tab = t.makeelement(q("hp:tab"), {})
+    tab.tail = "제목"
+    t.append(tab)
+    append_to_body(pkg, p)
+    d = EditDoc(pkg.save(tmp_path / "탭.hwpx"))
+    assert next(b for b in d.doc()["blocks"] if b["i"] == 1)["flat"] is True
+    html = (Path(__file__).parents[1] / "hwpxkit" / "editor" / "page.html").read_text(encoding="utf-8")
+    assert "b.flat" in html
+
+
+def test_state_kept_when_server_alive_but_slow(blank, tmp_path):
+    """I5: 서버 프로세스가 살아 있는데 응답만 늦으면 상태 파일을 지우지 않는다."""
+    import os
+    from hwpxkit.cli import _edit_state
+    from hwpxkit.editor import copy_path
+    from hwpxkit.editor.server import state_path
+    src = make_doc(blank, tmp_path)
+    st = state_path(copy_path(src))
+    st.write_text(json.dumps({"port": 9, "key": "k", "pid": os.getpid(), "url": "x"}), encoding="utf-8")
+    with pytest.raises(Exception, match="응답"):
+        _edit_state(src)
+    assert st.exists()
+    st.write_text(json.dumps({"port": 9, "key": "k", "pid": 999999, "url": "x"}), encoding="utf-8")
+    assert _edit_state(src) is None and not st.exists()

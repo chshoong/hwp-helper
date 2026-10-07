@@ -151,6 +151,7 @@ function editor(initial, onSave, place) {
 function editPara(el, b) {
   clearTools();
   if (b.mixed && !confirm("이 문단에는 굵게 등 여러 글자 모양이 섞여 있어요. 고치면 첫 글자 모양 하나로 합쳐져요. 계속할까요?")) return;
+  if (b.flat && !confirm("이 문단에는 탭이나 줄바꿈이 들어 있어요. 고치면 탭·줄바꿈 없이 글로만 남아요. 계속할까요?")) return;
   editor(b.text, text => api("POST", "/api/edit", {version: state.version, i: b.i, text}), box => el.after(box));
 }
 
@@ -170,7 +171,7 @@ function askBox(tools) {
   }, box => document.querySelector(`.b[data-i="${range.end - 1}"]`).after(box));
 }
 
-document.getElementById("undo").onclick = async () => { try { await api("POST", "/api/undo", {}); notice(""); await load(true); } catch (e) { notice(e.message); } };
+document.getElementById("undo").onclick = async () => { try { await api("POST", "/api/undo", {version: state.version}); notice(""); await load(true); } catch (e) { notice(e.message); if (e.status === 409) await load(true); } };
 document.getElementById("pagesBtn").onclick = async () => {
   const p = document.getElementById("pages"), body = document.getElementById("pagesBody");
   p.style.display = "block"; body.textContent = "한글로 쪽 그림을 만드는 중이에요… (몇 초 걸려요)";

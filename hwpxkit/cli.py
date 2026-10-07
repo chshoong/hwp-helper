@@ -370,6 +370,8 @@ def _edit_state(src: Path) -> dict | None:
         with urllib.request.urlopen(req, timeout=5):
             return st
     except OSError:
+        if bridge._alive(str(st["pid"])):  # 살아 있는데 응답만 늦음: 둘째 서버를 띄우거나 직접 쓰면 안 된다
+            raise PackageError("편집 화면 서버가 응답하지 않아요. 잠시 뒤 다시 시도해 주세요.")
         st_file.unlink(missing_ok=True)
         return None
 
@@ -431,10 +433,20 @@ def _cmd_edit(args, workdir) -> int:
         return 0
     queue = AskQueue.for_copy(copy_path(src))
     if act == "asks":
+        from .editor.queue import locate
         doc = EditDoc(src)
-        pending = [{"id": a["id"], "text": a["text"], "start": a["start"], "end": a["end"],
-                    "markdown": doc.range_markdown(a["start"], a["end"])}
-                   for a in queue.all() if a["status"] == "pending"]
+        texts = doc.texts()
+        pending = []
+        for a in queue.all():
+            if a["status"] != "pending":
+                continue
+            rng = locate(texts, a)  # 앞 부탁 반영으로 번호가 밀렸을 수 있어 지금 자리를 다시 찾는다
+            if rng is None:
+                queue.set(a["id"], "stale", "부탁을 남긴 뒤 그 부분이 바뀌어서 어디에 반영할지 다시 확인이 필요해요.")
+                print(f"[{a['id']}] 그 부분이 바뀌어서 다시 확인이 필요해요: {a['text']}", file=sys.stderr)
+                continue
+            pending.append({"id": a["id"], "text": a["text"], "start": rng[0], "end": rng[1],
+                            "markdown": doc.range_markdown(*rng)})
         if args.json:
             print(json.dumps(pending, ensure_ascii=False))
         elif not pending:
