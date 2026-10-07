@@ -19,7 +19,7 @@ public static class HwpRot {
 $a = Get-Content -Raw -Encoding UTF8 $ArgsFile | ConvertFrom-Json
 # 실행 중 개체 목록에는 사용자 한글 말고도 변환용 한글(창 없음)이 같은 이름으로 있을 수 있다.
 # 창이 보이고 이름 있는 문서를 연 한글만 사용자 한글로 본다. --doc이 있으면 그 문서를 연 한글.
-function DocsOf($x) { $d = @(); for ($i = 0; $i -lt $x.XHwpDocuments.Count; $i++) { $d += [string]$x.XHwpDocuments.Item($i).FullName }; ,$d }
+function DocsOf($x) { $d = @(); for ($i = 0; $i -lt $x.XHwpDocuments.Count; $i++) { $d += [string]$x.XHwpDocuments.Item($i).FullName }; return $d }
 $cands = @()
 foreach ($x in [HwpRot]::All()) {
   try {
@@ -37,13 +37,15 @@ if ($cands.Count -eq 0) {
   Emit @{ ok = $false; error = "not_running" }; exit 0
 }
 $h = $cands[0]
-$docs = @(DocsOf $h | Where-Object { $_ })
+$allDocs = @(DocsOf $h)                      # 한글 문서 순번 그대로 (빈 문서 포함)
+$docs = @($allDocs | Where-Object { $_ })    # 사용자에게 보여 줄 이름 있는 문서
 
 if ($a.doc) {
-  $hit = @(); for ($i = 0; $i -lt $docs.Count; $i++) { if ($docs[$i] -like "*$($a.doc)*") { $hit += $i } }
+  $hit = @(); for ($i = 0; $i -lt $allDocs.Count; $i++) { if ($allDocs[$i] -and $allDocs[$i] -like "*$($a.doc)*") { $hit += $i } }
   if ($hit.Count -eq 0) { Emit @{ ok = $false; error = "doc_not_found"; docs = $docs }; exit 0 }
-  if ($hit.Count -gt 1) { Emit @{ ok = $false; error = "doc_ambiguous"; docs = @($hit | ForEach-Object { $docs[$_] }) }; exit 0 }
+  if ($hit.Count -gt 1) { Emit @{ ok = $false; error = "doc_ambiguous"; docs = @($hit | ForEach-Object { $allDocs[$_] }) }; exit 0 }
   $null = $h.XHwpDocuments.Item($hit[0]).SetActive_XHwpDocument()
+  Start-Sleep -Milliseconds 300   # 문서 전환이 끝난 뒤 명령
 }
 
 function Find-Text($text, $times) {

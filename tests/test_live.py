@@ -77,6 +77,7 @@ def test_live_status_selection_export(live_doc, tmp_path):
     name, _ = live_doc
     st = live.status(doc=name)
     assert st["active"].endswith(name)
+    assert all(isinstance(d, str) for d in st["docs"]) and any(d.endswith(name) for d in st["docs"])
     live.call("select_test", doc=name, para=1, start=0, end=4)
     sel = live.selection(doc=name)
     assert sel["selected"] and sel["paragraphs"] == 1 and len(sel["text"]) == 4

@@ -58,13 +58,16 @@ def live_doc(tmp_path_factory):
     shutil.copyfile(preset_path("gov-brief"), doc)
     before = _hwp_pids()
     sp.Popen([str(live.hwp_exe()), str(doc)])
-    for _ in range(40):
+    ready = 0
+    for _ in range(60):  # 문서가 열리고 활성 문서로 두 번 연속 확인될 때까지 (열리는 중에 명령이 들어가지 않게)
         time.sleep(0.5)
         try:
-            if any(name in d for d in live.status()["docs"]):
-                break
+            ready = ready + 1 if live.status(doc=name)["active"].endswith(name) else 0
         except live.LiveError:
-            pass
+            ready = 0
+        if ready >= 2:
+            break
+    time.sleep(1)
     yield name, doc
     try:
         live.call("close_doc", doc=name)
