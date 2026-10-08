@@ -13,10 +13,11 @@ dependencies = ["lxml>=4.9", "Pillow>=9"]
 dev = ["pytest>=7"]
 
 [tool.setuptools]
-packages = ["hwpxkit"]
+packages = ["hwpxkit", "hwpxkit.editor"]
 
 [tool.setuptools.package-data]
 hwpxkit = ["*.ps1"]
+"hwpxkit.editor" = ["page.html"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -82,6 +82,7 @@ Claude가 형식(양식 파일이 있는지, 어떤 프리셋인지)을 묻고 �
 | `review 파일` | 날짜·요일·보고 기간·번호·참조·안내 문구·빈 칸·글꼴 검토 | .hwp일 때만 |
 | `renumber 파일 결과` | 표·그림·수식 번호 다시 매기기 (본문 참조도 고침) | .hwp일 때만 |
 | `live status·selection·replace·insert·export·review·section` | 열린 한글 창의 문서를 저장 없이 읽고 고치기, 검토 결과를 한글 메모로 | 예 |
+| `edit start·asks·apply·watch·stop` | Claude 앱 브라우저 창에서 문서처럼 보며 직접 고치거나 부탁을 남기면 서식 그대로 반영 (원본은 그대로, 사본에만) | 아니요 (쪽 모양 확인만 한글 필요) |
 
 양식 자리에는 파일 대신 프리셋 이름(`rnd-report` 등)을 써도 됩니다. `--json`을 붙이면 기계가 읽는 JSON으로 출력합니다.
 
