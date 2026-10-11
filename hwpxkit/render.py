@@ -662,7 +662,8 @@ def render_into(pkg: Package, catalog: Catalog, md: str, *, mode: str = "new",
         for marker, kind in r.toc_marks:
             ps = [p for p in root if p.tag == q("hp:p")]
             merged = marker.getparent() is None  # 맨 앞 블록이라 첫 문단(쪽 설정)에 합쳐짐
-            r._warnings += insert_toc(pkg, [kind], at=1 if merged else ps.index(marker), titles=titles)
+            r._warnings += insert_toc(pkg, [kind], at=1 if merged else ps.index(marker), titles=titles,
+                                      scan=not (mode == "new" and replace is None))
             if not merged:
                 root.remove(marker)
     return r.warnings

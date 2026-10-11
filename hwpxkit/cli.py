@@ -266,9 +266,12 @@ def _refresh_toc_in_place(hwpx: Path, workdir: Path) -> None:
     """차례 칸을 한글로 새로 고친다. 실패해도 임시 목록 파일은 그대로 두고 안내만 한다."""
     fixed = workdir / "toc_fixed.hwpx"
     try:
-        bridge.refresh_toc(hwpx, fixed)
+        _, updated = bridge.refresh_toc(hwpx, fixed)
     except bridge.BridgeError as e:
         print(f"[주의] 한글로 차례 쪽 번호를 채우지 못했어요 ({e}). 한글에서 도구 → 차례 새로 고침을 눌러 주세요.")
+        return
+    if not updated:
+        print("[주의] 한글이 차례를 새로 고치지 못했어요. 한글에서 도구 → 차례 새로 고침을 눌러 주세요.")
         return
     shutil.copyfile(fixed, hwpx)
     print("차례 쪽 번호를 한글로 채웠어요.")

@@ -99,18 +99,25 @@ def _kind_of(make: int) -> str | None:
     return None
 
 
+def _direct(p, tag: str) -> list:
+    """문단 바로 아래(run/ctrl)의 필드 요소만. 표 칸·글상자 안 것은 제외."""
+    return [c.find(q(tag)) for run in p.findall(q("hp:run")) for c in run.findall(q("hp:ctrl"))
+            if c.find(q(tag)) is not None]
+
+
 def toc_blocks(tops: list) -> list[tuple[int, int, int]]:
-    """문서의 차례 칸: (시작 문단, 끝 문단(포함), ContentsMake)."""
+    """문서의 차례 칸: (시작 문단, 끝 문단(포함), ContentsMake). 끝(fieldEnd)을 못 찾은 칸은 건드리지 않게 뺀다."""
     out = []
     for i, p in enumerate(tops):
-        for fb in p.iter(q("hp:fieldBegin")):
+        for fb in _direct(p, "hp:fieldBegin"):
             if fb.get("type") != "TABLEOFCONTENTS":
                 continue
             cmd = next((e.text or "" for e in fb.iter(q("hp:stringParam")) if e.get("name") == "Command"), "")
             m = re.search(r"ContentsMake:uint:(\d+)", cmd)
             end = next((j for j in range(i, len(tops))
-                        if any(fe.get("beginIDRef") == fb.get("id") for fe in tops[j].iter(q("hp:fieldEnd")))), i)
-            out.append((i, end, int(m.group(1)) if m else 0))
+                        if any(fe.get("beginIDRef") == fb.get("id") for fe in _direct(tops[j], "hp:fieldEnd"))), None)
+            if end is not None:
+                out.append((i, end, int(m.group(1)) if m else 0))
     return out
 
 
@@ -192,9 +199,11 @@ _EMPTY_CELL = {"", "…", "...", "·", "‥"}
 
 def _droppable(p) -> bool:
     """양식 목차 자리 밑의 빈 문단, 빈 목차 표(모든 칸이 비었거나 '…'만)."""
+    if p.get("pageBreak") == "1" or p.get("columnBreak") == "1":
+        return False
     tbl = next(p.iter(q("hp:tbl")), None)
-    if tbl is None:
-        return is_blank(p)
+    if tbl is None:  # 머리말·쪽 번호·필드 같은 개체(ctrl)가 든 문단은 빈 줄처럼 보여도 남긴다
+        return is_blank(p) and not any(run.findall(q("hp:ctrl")) for run in p.findall(q("hp:run")))
     if own_text(p).strip():
         return False
     return all(all_text(tc).strip() in _EMPTY_CELL for tc in tbl.iter(q("hp:tc")))
@@ -210,11 +219,15 @@ def find_slot(pkg: Package, kind: str) -> tuple[int, str, list[int]]:
     for want, reason in ((kind, f"양식 {_LABEL[kind]} 자리"), ("*", "양식 목차 자리")):
         hit = next((i for i, t in enumerate(texts) if _SLOT.get(t) == want), None)
         if hit is not None and not (kind == "제목" and want == kind):
-            drop, j = [], hit + 1
-            while j < len(tops) and _droppable(tops[j]):
-                drop.append(j)
-                j += 1
-            return hit + 1, reason, drop
+            ends = {s: e for s, e, _ in toc_blocks(tops)}
+            j = hit + 1
+            while j in ends:  # 이미 그 제목 아래 있는 다른 차례 칸 뒤에
+                j = ends[j] + 1
+            drop, k = [], j
+            while k < len(tops) and _droppable(tops[k]):
+                drop.append(k)
+                k += 1
+            return j, reason, drop
     k = next((i for i, p in enumerate(tops) if i > 0 and p.get("pageBreak") == "1"), None)
     if k is not None:
         return k, "표지 다음", []
@@ -227,8 +240,37 @@ def _insert_before(root, ref, els) -> None:
         root.insert(pos + k, el)
 
 
+_KEEP = ("hp:secPr", "hp:colPr", "hp:tbl", "hp:pic", "hp:equation")
+
+
+def _drop_ctrl(p, tag: str, field_id: str) -> None:
+    for el in _direct(p, tag):
+        if el.get("id") == field_id or el.get("beginIDRef") == field_id:
+            ctrl = el.getparent()
+            ctrl.getparent().remove(ctrl)
+
+
+def _remove_block(root, tops: list, s: int, e: int):
+    """기존 차례 칸을 지운다. 0번 문단(쪽 설정)·다른 개체가 든 시작 문단과 본문이 합쳐진 끝 문단은
+    필드만 떼고 남긴다. 새 칸을 넣을 자리(이 문단 앞, 없으면 None)를 돌려준다."""
+    fid = next(fb.get("id") for fb in _direct(tops[s], "hp:fieldBegin") if fb.get("type") == "TABLEOFCONTENTS")
+    target = tops[e + 1] if e + 1 < len(tops) else None
+    for i in range(s, e + 1):
+        p = tops[i]
+        keep_begin = i == s and (i == 0 or any(next(p.iter(q(t)), None) is not None for t in _KEEP))
+        keep_end = i == e and i != s and bool(own_text(p).strip())
+        if keep_begin or keep_end:
+            _drop_ctrl(p, "hp:fieldBegin", fid)
+            _drop_ctrl(p, "hp:fieldEnd", fid)
+            if keep_end:
+                target = p
+        else:
+            root.remove(p)
+    return target
+
+
 def insert_toc(pkg: Package, kinds, *, level: int = 2, at: int | None = None,
-               titles: list | None = None) -> list[str]:
+               titles: list | None = None, scan: bool = True) -> list[str]:
     """차례 칸을 넣는다. at(최상위 문단 번호)이 있으면 그 문단 앞에, 없으면 차례 자리(find_slot)에.
     같은 종류의 기존 칸은 바꾼다. 경고 목록을 돌려준다."""
     bad = [k for k in kinds if k not in ORDER]
@@ -244,27 +286,36 @@ def insert_toc(pkg: Package, kinds, *, level: int = 2, at: int | None = None,
     anchor = ref if at is not None else None  # 자기 자리가 없는 다음 칸은 앞 칸 바로 뒤에
     for kind in [k for k in ORDER if k in set(kinds)]:
         if kind == "제목":
-            mark_titles(pkg, level, titles)
+            if titles is not None:
+                mark_titles(pkg, level, titles)
+            if titles is None or scan:
+                mark_titles(pkg, level)
         entries = _entries(pkg, kind)
         if not entries:
             warnings.append(_EMPTY[kind])
             continue
         els = _block(pkg, kind, level, entries, ids)
         root, tops = _tops(pkg)
+        existing = next(((s, e) for s, e, m in toc_blocks(tops) if _kind_of(m) == kind), None)
+        drop = []
         if at is not None:
-            target, drop = anchor, []
+            if existing:  # 같은 종류 칸은 하나만
+                _remove_block(root, tops, *existing)
+            target = anchor
         else:
             idx, reason, drop_idx = find_slot(pkg, kind)
             own = reason == "기존 차례 칸" or reason == f"양식 {_LABEL[kind]} 자리"
             if not own and anchor is not None:
-                target, drop = anchor, []
+                target = anchor
+            elif reason == "기존 차례 칸":
+                if idx != 0:
+                    els[0].set("pageBreak", tops[idx].get("pageBreak", "0"))
+                target = _remove_block(root, tops, *existing)
             else:
                 drop = [tops[i] for i in drop_idx]
                 nxt = idx + len(drop_idx)
                 target = tops[nxt] if nxt < len(tops) else None
-                if reason == "기존 차례 칸":
-                    els[0].set("pageBreak", tops[idx].get("pageBreak", "0"))
-                elif reason == "표지 다음":
+                if reason == "표지 다음":
                     page_break = True
         for p in drop:
             root.remove(p)
@@ -274,6 +325,8 @@ def insert_toc(pkg: Package, kinds, *, level: int = 2, at: int | None = None,
         _insert_before(root, target, els)
         anchor = target
     return warnings
+
+
 _CHAPTER = re.compile(r"(표|그림)\s*\d+\s*[-–.]\s*\d+")
 _REF = re.compile(r"(?<![가-힣A-Za-z])(표|그림)\s*(\d+)(?!\s*[-–.]?\s*\d)")
 
@@ -304,9 +357,9 @@ def _link_t(run, t, objs: dict, ids: _Ids) -> int:
     text, pos, out, n = t.text, 0, [], 0
     for m in _REF.finditer(text):
         kind, num = m.group(1), int(m.group(2))
-        if not 1 <= num <= len(objs[kind]):
+        if num not in objs[kind]:
             continue
-        fb = _crossref(ids, kind, objs[kind][num - 1].get("id"))
+        fb = _crossref(ids, kind, objs[kind][num])
         if text[pos:m.start(2)]:
             out.append(_t(text[pos:m.start(2)]))
         out += [_ctrl(fb), _t(m.group(2)), _ctrl(_field_end(fb))]
@@ -327,13 +380,35 @@ def link_refs(pkg: Package) -> tuple[int, str | None]:
     if uses_chapter_numbers(pkg):
         return 0, "chapter"
     root, tops = _tops(pkg)
-    objs = {k: [o for o in root.iter(q(tag)) if o.find(q("hp:caption")) is not None] for k, tag in _TAG.items()}
+    objs = {k: _numbered(root, k) for k in _TAG}
     skip, ids, n = _in_toc(tops), _Ids(pkg), 0
     for i, p in enumerate(tops):
         if i in skip:
             continue
+        depth = 0  # 기존 필드(하이퍼링크·누름틀·메모 등) 안의 글은 건드리지 않는다
         for run in p.findall(q("hp:run")):  # 바로 아래 글만: 표 칸·캡션 안 글은 제외
-            for t in list(run.findall(q("hp:t"))):
-                if len(t) == 0 and t.text:
-                    n += _link_t(run, t, objs, ids)
+            for el in list(run):
+                if el.tag == q("hp:ctrl"):
+                    depth += (el.find(q("hp:fieldBegin")) is not None) - (el.find(q("hp:fieldEnd")) is not None)
+                elif el.tag == q("hp:t") and depth == 0 and len(el) == 0 and el.text:
+                    n += _link_t(run, el, objs, ids)
     return n, None
+
+
+def _numbered(root, kind: str) -> dict[int, str]:
+    """한글이 보여 줄 번호 → 개체 id. 번호를 세는 개체(numberingType)를 문서 순서로 세고(새 번호 ctrl 반영),
+    캡션에 한글 자동 번호가 있는 것만 담는다 (손으로 쓴 번호는 상호 참조로 만들지 않음)."""
+    ntype = "TABLE" if kind == "표" else "PICTURE"
+    out, n = {}, 0
+    for el in root.iter(q(_TAG[kind]), q("hp:newNum")):
+        if el.tag == q("hp:newNum"):
+            if el.get("numType") == ntype:
+                n = int(el.get("num", "1")) - 1
+            continue
+        if el.get("numberingType") != ntype:
+            continue
+        n += 1
+        cap = el.find(q("hp:caption"))
+        if cap is not None and next(cap.iter(q("hp:autoNum")), None) is not None:
+            out[n] = el.get("id")
+    return out
