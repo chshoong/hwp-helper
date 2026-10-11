@@ -321,3 +321,55 @@ def test_toc_block_first_in_document(blank, tmp_path):
     pkg = make_doc(blank, tmp_path, md="[차례]\n\n" + DOC_MD)
     blocks = toc.toc_blocks(tops(pkg))
     assert [m for _, _, m in blocks] == [65] and blocks[0][0] == 1
+
+
+def entry_pages(pkg):
+    """새로 고친 차례 칸의 항목마다 (ContentsMake, 쪽 번호 글)."""
+    from hwpxkit import toc
+    ps = tops(pkg)
+    out = []
+    for s, e, m in toc.toc_blocks(ps):
+        for p in ps[s + 1:e]:
+            tab = next(p.iter(q("hp:tab")), None)
+            if tab is not None:
+                out.append((m, (tab.tail or "").strip()))
+    return out
+
+
+@pytest.mark.hangul
+def test_refresh_fills_page_numbers(blank, tmp_path):
+    from hwpxkit import bridge, toc
+    md = ("[차례]\n\n[표 목차]\n\n[그림 목차]\n\n---쪽---\n\n# 제1장 서론\n\n" + LONG + "\n\n표: 첫째 표\n| 가 | 나 |\n|---|---|\n| 1 | 2 |\n\n"
+          "---쪽---\n\n# 제2장 방법\n\n## 2.1 자료\n\n" + LONG + "\n\n![첫째 그림](g.png)\n\n표: 둘째 표\n| 다 | 라 |\n|---|---|\n| 3 | 4 |\n")
+    pkg = make_doc(blank, tmp_path, md=md)
+    src = pkg.save(tmp_path / "before.hwpx")
+    out = bridge.refresh_toc(src, tmp_path / "after.hwpx")
+    pages = entry_pages(Package.open(out))
+    tables = [pg for m, pg in pages if m == 2]
+    figures = [pg for m, pg in pages if m == 4]
+    titles = [pg for m, pg in pages if m == 65]
+    assert tables == ["2", "3"] and figures == ["3"]
+    assert len(titles) == 3 and titles[0] == "2"
+
+
+@pytest.mark.hangul
+def test_crossref_number_recomputed_by_hangul(blank, tmp_path):
+    from hwpxkit import bridge, toc
+    pkg = make_doc(blank, tmp_path)
+    toc.link_refs(pkg)
+    fb = crossrefs(pkg)[0]
+    shown = fb.getparent().getnext()
+    shown.text = "9"  # 일부러 틀린 값
+    src = pkg.save(tmp_path / "stale.hwpx")
+    out = bridge.convert(src, tmp_path / "resaved.hwpx")
+    fb2 = crossrefs(Package.open(out))[0]
+    assert fb2.getparent().getnext().text == "2"
+
+
+def test_skill_documents_toc():
+    from pathlib import Path as P
+    root = P(__file__).parents[1] / "skills" / "hwp-helper"
+    text = (root / "reference" / "toc.md").read_text(encoding="utf-8")
+    for word in ("hwpx.py\" toc", "[차례]", "[표 목차]", "[그림 목차]", "--refs", "차례 새로 고침"):
+        assert word in text, word
+    assert "reference/toc.md" in (root / "SKILL.md").read_text(encoding="utf-8")
