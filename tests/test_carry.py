@@ -71,3 +71,81 @@ def test_period_missing_needs_to(blank):
     with pytest.raises(CarryError, match="--to"):
         carry(pkg)
     assert carry(pkg, to=(2026, 10))["from"] == (2026, 9)
+
+
+def test_plan_moves_to_actual(blank):
+    from hwpxkit.carry import carry
+    r = carry(monthly(blank))
+    spec = r["spec"]
+    assert "@칸 표1 | 과제 1 | 금월(9월) 실적\n모형 시험\n- 시범 자료 검증\n" in spec
+    assert "@칸 표1 | 과제 1 | 차월(10월) 계획\n\n" in spec
+    assert "과제 2 | 금월" not in spec  # 계획이 빈 행은 건너뜀
+    plans = [a for a in r["ask"] if a["kind"] == "next-plan"]
+    assert len(plans) == 1 and "과제 1" in plans[0]["where"]
+
+
+def test_numbers_asked_not_invented(blank):
+    from hwpxkit.carry import carry
+    r = carry(monthly(blank))
+    nums = {a["current"]: a for a in r["ask"] if a["kind"] == "number"}
+    assert set(nums) == {"45%", "1,200"}
+    assert nums["45%"]["address"].startswith("@칸 표2 | 진행률")
+    assert "45%" not in r["spec"]
+
+
+def test_ambiguous_plan_columns(blank):
+    from hwpxkit.carry import carry
+    pkg = Package.open(blank)
+    append_to_body(pkg, para("‘26년 9월 월간 보고"))
+    append_to_body(pkg, table(2, 4, texts={(0, 0): "과제", (0, 1): "금월 실적", (0, 2): "차월 계획", (0, 3): "연간 계획",
+                                            (1, 0): "가", (1, 1): "a", (1, 2): "b", (1, 3): "c"}))
+    r = carry(pkg)
+    assert "@칸" not in r["spec"] and any(a["kind"] == "plan-columns" for a in r["ask"])
+
+
+def test_merged_or_object_cells_skipped(blank):
+    from hwpxkit.carry import carry
+    pkg = Package.open(blank)
+    append_to_body(pkg, para("‘26년 9월 월간 보고"))
+    append_to_body(pkg, table(3, 3, texts={(0, 0): "과제", (0, 1): "금월 실적", (0, 2): "차월 계획",
+                                            (1, 0): "가", (1, 1): "a", (1, 2): "b"}, spans={(1, 2): (2, 1)}, skip={(2, 2)}))
+    r = carry(pkg)
+    assert "@칸" not in r["spec"]
+
+
+def test_spec_applies_with_fill(blank, tmp_path):
+    from hwpxkit.carry import carry
+    from hwpxkit.form import cells
+    pkg = monthly(blank)
+    spec = carry(pkg)["spec"]
+    fill(pkg, parse_fill(spec), base_dir=tmp_path)
+    by = {(c.table, c.row_header, c.col_header): c.text for c in cells(pkg)}
+    assert by[(1, "과제 1", "금월(9월) 실적")] == "모형 시험\n- 시범 자료 검증"
+    assert by[(1, "과제 1", "차월(10월) 계획")] == ""
+    assert by[(1, "과제 2", "금월(9월) 실적")] == "보고서 초안"
+    texts = [t for t in (p.text or "" for p in pkg.xml(SECTION).iter()) if t]
+    assert any("‘26년 10월" in t for t in texts) and any("2026. 10. 1. ~ 10. 31." in t for t in texts)
+
+
+def test_cli_carry(blank, tmp_path, capsys):
+    from hwpxkit.cli import main
+    src = monthly(blank).save(tmp_path / "9월.hwpx")
+    out = tmp_path / "초안.md"
+    assert main(["carry", str(src), str(out)]) == 0
+    text = capsys.readouterr().out
+    assert "2026년 9월 → 2026년 10월" in text and "확인할 것" in text and "2026. 11. 5.(목)" in text
+    assert "@바꾸기 ‘26년 9월 => ‘26년 10월" in out.read_text(encoding="utf-8")
+    assert main(["carry", str(src), str(out), "--json"]) == 0
+    import json
+    data = json.loads(capsys.readouterr().out)
+    assert data["to"] == "2026-10" and data["ask"]
+
+
+def test_cli_carry_to_option(blank, tmp_path, capsys):
+    from hwpxkit.cli import main
+    pkg = Package.open(blank)
+    append_to_body(pkg, para("기간 없음"))
+    src = pkg.save(tmp_path / "x.hwpx")
+    assert main(["carry", str(src), str(tmp_path / "o.md")]) == 2
+    assert "--to" in capsys.readouterr().err
+    assert main(["carry", str(src), str(tmp_path / "o.md"), "--to", "2026-10"]) == 0

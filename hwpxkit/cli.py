@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import shutil
 import sys
 import tempfile
@@ -316,6 +317,36 @@ def _cmd_table_from(args, workdir) -> int:
     return 0
 
 
+def _cmd_carry(args, workdir) -> int:
+    from . import carry as carry_mod
+    src, out = _resolve_template(args.file), Path(args.out)
+    if out.suffix.lower() != ".md":
+        raise ValueError(f"초안은 .md 파일로 저장해요: {out.name}")
+    to = None
+    if args.to:
+        m = re.fullmatch(r"(\d{4})-(\d{1,2})", args.to.strip())
+        if not m or not 1 <= int(m.group(2)) <= 12:
+            raise ValueError("--to는 2026-10처럼 써 주세요.")
+        to = (int(m.group(1)), int(m.group(2)))
+    r = carry_mod.carry(_open_any(src, workdir), to=to)
+    out.write_text(r["spec"], encoding="utf-8")
+    if args.json:
+        print(json.dumps({"from": "%d-%02d" % r["from"], "to": "%d-%02d" % r["to"], "spec": r["spec"],
+                          "ask": r["ask"], "warnings": r["warnings"]}, ensure_ascii=False))
+        return 0
+    (fy, fm), (ty, tm) = r["from"], r["to"]
+    print(f"{fy}년 {fm}월 → {ty}년 {tm}월 초안을 만들었어요: {out}")
+    for w in r["warnings"]:
+        print(f"[주의] {w}")
+    if r["ask"]:
+        print("확인할 것:")
+        for a in r["ask"]:
+            extra = f" (지금: {a['current']})" if a["current"] else ""
+            extra += f" → 제안: {a['suggest']}" if a["suggest"] else ""
+            print(f"  - {a['where']}: {a['message']}{extra}")
+    return 0
+
+
 def _cmd_equations(args, workdir) -> int:
     total = _count_equations(_open_any(Path(args.src), workdir))
     out, n = bridge.refresh_equations(Path(args.src), Path(args.dst))
@@ -620,6 +651,12 @@ def _parser() -> argparse.ArgumentParser:
     s.add_argument("--header", type=int, default=1, help="머리 행 수 (기본 1)")
     s.add_argument("--out", help="마크다운을 저장할 파일 (없으면 화면에)")
     s.set_defaults(func=_cmd_table_from)
+    s = sub.add_parser("carry", help="지난달 보고서로 이번 달 채우기 지시문 초안 만들기")
+    s.add_argument("file", help="지난달 보고서 (.hwpx/.hwp)")
+    s.add_argument("out", help="초안 지시문 .md")
+    s.add_argument("--to", help="이번 달 (예: 2026-10). 문서에서 보고 기간을 못 찾을 때")
+    s.add_argument("--json", action="store_true")
+    s.set_defaults(func=_cmd_carry)
     s = sub.add_parser("presets", help="양식 없이 쓸 수 있는 프리셋 목록")
     s.add_argument("--json", action="store_true")
     s.set_defaults(func=_cmd_presets)

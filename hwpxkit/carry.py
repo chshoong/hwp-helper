@@ -8,8 +8,10 @@ import calendar
 import datetime as dt
 import re
 
+from .form import cells, list_fields
+from .ns import q
 from .package import Package
-from .review import _REPORT_DATE_WORDS, _add_month, _period, _texts, _year
+from .review import _CURRENT, _NEXT, _REPORT_DATE_WORDS, _add_month, _period, _texts, _year
 
 _WEEK = "월화수목금토일"
 _YM = re.compile(r"([‘'’]?\s*)(\d{4}|\d{2})(\s*년\s*)(\d{1,2})(\s*월)")
@@ -94,6 +96,69 @@ def _report_dates(texts: list[str]) -> list[dict]:
     return out
 
 
+_NUM_HEAD = re.compile(r"누적|진행률|진척률|달성률|공정률|집행률|%")
+_NUM_TEXT = re.compile(r"^[-+]?[\d,]*\.?\d+\s*%?$")
+_OBJ = ("hp:tbl", "hp:pic", "hp:equation")
+
+
+def _has_object(tc) -> bool:
+    sub = tc.find(q("hp:subList"))
+    return any(next(p.iter(q(t)), None) is not None for p in sub.findall(q("hp:p")) for t in _OBJ)
+
+
+def _is_current(head: str) -> bool:
+    return bool(_CURRENT.search(head) or "실적" in head) and not (_NEXT.search(head) or "계획" in head)
+
+
+def _is_next(head: str) -> bool:
+    return bool(_NEXT.search(head) or "계획" in head) and not (_CURRENT.search(head) or "실적" in head)
+
+
+def _plan_moves(pkg: Package) -> tuple[list[str], list[dict]]:
+    """금월 실적 ← 차월 계획 (같은 표·같은 행), 차월 계획 칸은 비움."""
+    all_cells = cells(pkg)
+    address = {(f["table"], f["row"] - 1, f["col"] - 1): f["address"] for f in list_fields(pkg)}
+    lines, ask = [], []
+    for t in sorted({c.table for c in all_cells}):
+        tc = [c for c in all_cells if c.table == t]
+        heads = {c.col: c.text for c in tc if c.row == 0 and c.colspan == 1}
+        cur = [col for col, h in heads.items() if _is_current(h)]
+        nxt = [col for col, h in heads.items() if _is_next(h)]
+        if not cur and not nxt:
+            continue
+        if len(cur) != 1 or len(nxt) != 1:
+            ask.append({"kind": "plan-columns", "where": f"표{t}", "address": "", "current": "", "suggest": "",
+                        "message": "계획·실적 열을 정확히 찾지 못했어요. 이 표는 직접 확인해 주세요."})
+            continue
+        grid = {(c.row, c.col): c for c in tc}
+        for r in sorted({c.row for c in tc if c.row > 0}):
+            src, dst = grid.get((r, nxt[0])), grid.get((r, cur[0]))
+            if src is None or dst is None or src.rowspan != 1 or dst.rowspan != 1:
+                continue
+            if not src.text or _has_object(src.tc) or _has_object(dst.tc):
+                continue
+            a_dst, a_src = address.get((t, r, cur[0])), address.get((t, r, nxt[0]))
+            if not a_dst or not a_src:
+                continue
+            lines += [a_dst, src.text, "", a_src, "", ""]
+            ask.append({"kind": "next-plan", "where": f"표{t} {src.row_header or f'{r + 1}행'}", "address": a_src,
+                        "current": "", "suggest": "", "message": "다음 달 계획을 새로 알려 주세요"})
+    return lines, ask
+
+
+def _numbers(pkg: Package) -> list[dict]:
+    address = {(f["table"], f["row"] - 1, f["col"] - 1): f["address"] for f in list_fields(pkg)}
+    out = []
+    for c in cells(pkg):
+        if c.row == 0 or c.col == 0:
+            continue
+        text = c.text.strip()
+        if _NUM_HEAD.search(f"{c.row_header} {c.col_header}") and _NUM_TEXT.match(text):
+            out.append({"kind": "number", "where": c.label(), "address": address.get((c.table, c.row, c.col), ""),
+                        "current": text, "suggest": "", "message": "이번 달 값이 필요해요"})
+    return out
+
+
 def carry(pkg: Package, to: tuple[int, int] | None = None) -> dict:
     texts_ctx = _texts(pkg)
     found = _period(texts_ctx)
@@ -109,6 +174,8 @@ def carry(pkg: Package, to: tuple[int, int] | None = None) -> dict:
     texts = [t for t, _ in texts_ctx]
     plain = [t for t, ctx in texts_ctx if not _REPORT_DATE_WORDS.search(ctx)]
     lines = [f"@바꾸기 {old} => {new}" for old, new in _replacements(plain, frm)]
-    ask = _report_dates(texts)
-    return {"from": frm, "to": to, "spec": "\n".join(lines) + ("\n" if lines else ""), "ask": ask,
-            "warnings": warnings}
+    moves, move_ask = _plan_moves(pkg)
+    lines += [""] + moves if moves else []
+    ask = _report_dates(texts) + move_ask + _numbers(pkg)
+    spec = "\n".join(lines) + "\n" if lines else ""
+    return {"from": frm, "to": to, "spec": spec, "ask": ask, "warnings": warnings}
