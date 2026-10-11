@@ -47,6 +47,7 @@ class Table:
     caption: str = ""
     label: str | None = None
     widths: list[float] | None = None
+    aligns: list[str] = field(default_factory=list)  # 열마다 left|center|right|'' (구분 줄 콜론)
     lineno: int = field(default=0, compare=False)
 
 
@@ -160,6 +161,13 @@ def _cells(line: str) -> list[str]:
     return [c.strip() for c in line.split("|")]
 
 
+def _align(sep: str) -> str:
+    """구분 줄 한 칸(':---', ':---:', '---:')의 정렬."""
+    s = sep.strip()
+    left, right = s.startswith(":"), s.endswith(":")
+    return "center" if left and right else "right" if right else "left" if left else ""
+
+
 def parse(md: str) -> list[Block]:
     lines = md.replace("\r\n", "\n").split("\n")
     blocks: list[Block] = []
@@ -172,17 +180,20 @@ def parse(md: str) -> list[Block]:
             i += 1
             continue
         if line.startswith("|"):
-            rows = []
+            rows, aligns = [], []
             while i < len(lines) and lines[i].strip().startswith("|"):
                 row = lines[i].strip()
-                if not _TABLE_SEP.match(row):
+                if _TABLE_SEP.match(row):
+                    aligns = [_align(c) for c in _cells(row)]
+                else:
                     rows.append(_cells(row))
                 i += 1
             width = max(len(r) for r in rows)
             rows = [r + [""] * (width - len(r)) for r in rows]
+            aligns = (aligns + [""] * width)[:width] if any(aligns) else []  # 콜론이 없으면 전과 같음
             text, attrs, _ = caption or ("", {}, 0)
             caption = None
-            blocks.append(Table(rows, text, attrs.get("label"), attrs.get("widths"), lineno=lineno))
+            blocks.append(Table(rows, text, attrs.get("label"), attrs.get("widths"), aligns=aligns, lineno=lineno))
             continue
         if caption is not None:
             raise MarkdownError(f"{caption[2]}번째 줄 '표: {caption[0]}' 바로 다음에는 표(| … |)가 와야 해요 ({lineno}번째 줄).")

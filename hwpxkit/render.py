@@ -58,6 +58,7 @@ class Renderer:
         self.base_dir = Path(base_dir)
         self.geo = page_geometry(pkg)
         self.ids = IdAllocator(pkg)
+        self._align_cache: dict = {}
         self.toc_marks = []  # [차례] 자리표 문단과 종류
         self.heading_els = []  # 렌더한 제목 문단과 단계 (제목 차례 표시용)
         self.labels: dict[str, str] = {}
@@ -399,21 +400,31 @@ class Renderer:
                 tc.find(q("hp:cellAddr")).attrib.update({"colAddr": str(c), "rowAddr": str(r)})
                 tc.find(q("hp:cellSpan")).attrib.update({"colSpan": str(cs), "rowSpan": str(rs)})
                 tc.find(q("hp:cellSz")).attrib.update({"width": str(sum(cols[c:c + cs])), "height": str(row_h * rs)})
-                self._fill_cell(tc, rows[r][c])
+                self._fill_cell(tc, rows[r][c], b.aligns[c] if r > 0 and b.aligns else "")
                 tr.append(tc)
         self.ids.refresh(p)
         return p
 
-    def _fill_cell(self, tc: etree._Element, text: str) -> None:
+    def _fill_cell(self, tc: etree._Element, text: str, align: str = "") -> None:
         sub = tc.find(q("hp:subList"))
         tmpl = sub.find(q("hp:p"))
         char = _cell_char(tmpl)
         attrs = dict(tmpl.attrib)
+        if align in ("right", "center"):
+            attrs["paraPrIDRef"] = self._aligned(attrs["paraPrIDRef"], align.upper())
         for old in list(sub):
             sub.remove(old)
         for line in text.split("<br>"):
             p = etree.SubElement(sub, q("hp:p"), attrs)
             self._fill_runs(p, char, parse_inline(line.strip()))
+
+    def _aligned(self, para_pr: str, horizontal: str) -> str:
+        """정렬만 바꾼 문단 모양 (같은 조합은 다시 씀)."""
+        key = (para_pr, horizontal)
+        if key not in self._align_cache:
+            self._align_cache[key] = self.h.derive(
+                "paraPr", para_pr, lambda e: e.find(q("hh:align")).set("horizontal", horizontal))
+        return self._align_cache[key]
 
     def _math_block(self, b: Math) -> list[etree._Element]:
         number = self._numbers[id(b)]
