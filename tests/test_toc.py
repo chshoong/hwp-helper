@@ -99,3 +99,67 @@ def test_field_ids_unique(blank, tmp_path):
     toc.insert_toc(pkg, ["제목", "표", "그림"], at=1)
     ids = [fb.get("id") for fb in pkg.xml(SECTION).iter(q("hp:fieldBegin"))]
     assert len(ids) == 3 and len(set(ids)) == 3
+
+
+def test_slot_existing_block_and_reinsert(blank, tmp_path):
+    from hwpxkit import toc
+    pkg = make_doc(blank, tmp_path)
+    toc.insert_toc(pkg, ["표"], at=1)
+    assert toc.find_slot(pkg, "표") == (1, "기존 차례 칸", [1, 2, 3, 4])
+
+
+def test_insert_twice_keeps_one_block(blank, tmp_path):
+    from hwpxkit import toc
+    pkg = make_doc(blank, tmp_path)
+    toc.insert_toc(pkg, ["제목", "표"])
+    toc.insert_toc(pkg, ["제목", "표"])
+    makes = [m for _, _, m in toc.toc_blocks(tops(pkg))]
+    assert makes == [65, 2]
+
+
+def test_slot_template_heading_drops_blank_and_empty_table(blank, tmp_path):
+    from hwpxkit import toc
+    pkg = Package.open(blank)
+    append_to_body(pkg, para("표 지"))
+    append_to_body(pkg, para("목 차"))
+    append_to_body(pkg, para(""))
+    append_to_body(pkg, table(2, 2, texts={(0, 0): "…"}))
+    append_to_body(pkg, para("제1장 서론"))
+    append_to_body(pkg, para(LONG))
+    assert toc.find_slot(pkg, "제목") == (3, "양식 목차 자리", [3, 4])
+    toc.insert_toc(pkg, ["제목"])
+    texts = [own_text(p) for p in tops(pkg)]
+    assert texts[2] == "목 차" and next(tops(pkg)[3].iter(q("hp:fieldBegin"))).get("type") == "TABLEOFCONTENTS"
+    assert sum(1 for _ in pkg.xml(SECTION).iter(q("hp:tbl"))) == 0
+
+
+def test_slot_kind_specific_heading(blank, tmp_path):
+    from hwpxkit import toc
+    pkg = make_doc(blank, tmp_path)
+    root = pkg.edit(SECTION)
+    root.insert(2, para("표 목차"))
+    root.insert(2, para("목차"))
+    at, reason, drop = toc.find_slot(pkg, "표")
+    assert reason == "양식 표 목차 자리" and own_text(tops(pkg)[at - 1]) == "표 목차"
+    assert toc.find_slot(pkg, "그림")[1] == "양식 목차 자리"
+
+
+def test_slot_after_cover_page(blank, tmp_path):
+    from hwpxkit import toc
+    pkg = make_doc(blank, tmp_path)
+    ps = tops(pkg)
+    k = next(i for i, p in enumerate(ps) if own_text(p).startswith("제2장"))  # 제1장은 0번 문단에 합쳐짐
+    ps[k].set("pageBreak", "1")
+    assert toc.find_slot(pkg, "표") == (k, "표지 다음", [])
+    toc.insert_toc(pkg, ["제목", "표"])
+    ps = tops(pkg)
+    starts = [s for s, _, _ in toc.toc_blocks(ps)]
+    assert ps[starts[0]].get("pageBreak") == "1" and ps[starts[1]].get("pageBreak") == "0"
+    after = toc.toc_blocks(ps)[-1][1] + 1
+    assert own_text(ps[after]).endswith("제2장 방법") and ps[after].get("pageBreak") == "1"
+
+
+def test_slot_document_start(blank, tmp_path):
+    from hwpxkit import toc
+    pkg = make_doc(blank, tmp_path)
+    assert toc.find_slot(pkg, "표") == (1, "문서 처음", [])

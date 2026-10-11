@@ -185,6 +185,42 @@ def _block(pkg: Package, kind: str, level: int, entries: list[str], ids: _Ids) -
     return out
 
 
+_LABEL = {"제목": "차례", "표": "표 목차", "그림": "그림 목차"}
+_SLOT = {"목차": "*", "차례": "*", "표목차": "표", "표차례": "표", "그림목차": "그림", "그림차례": "그림"}
+_EMPTY_CELL = {"", "…", "...", "·", "‥"}
+
+
+def _droppable(p) -> bool:
+    """양식 목차 자리 밑의 빈 문단, 빈 목차 표(모든 칸이 비었거나 '…'만)."""
+    tbl = next(p.iter(q("hp:tbl")), None)
+    if tbl is None:
+        return is_blank(p)
+    if own_text(p).strip():
+        return False
+    return all(all_text(tc).strip() in _EMPTY_CELL for tc in tbl.iter(q("hp:tc")))
+
+
+def find_slot(pkg: Package, kind: str) -> tuple[int, str, list[int]]:
+    """차례 칸을 넣을 자리: (이 문단 앞에, 근거, 지울 문단들)."""
+    _, tops = _tops(pkg)
+    for s, e, m in toc_blocks(tops):
+        if _kind_of(m) == kind:
+            return s, "기존 차례 칸", list(range(s, e + 1))
+    texts = [re.sub(r"\s+", "", own_text(p)) for p in tops]
+    for want, reason in ((kind, f"양식 {_LABEL[kind]} 자리"), ("*", "양식 목차 자리")):
+        hit = next((i for i, t in enumerate(texts) if _SLOT.get(t) == want), None)
+        if hit is not None and not (kind == "제목" and want == kind):
+            drop, j = [], hit + 1
+            while j < len(tops) and _droppable(tops[j]):
+                drop.append(j)
+                j += 1
+            return hit + 1, reason, drop
+    k = next((i for i, p in enumerate(tops) if i > 0 and p.get("pageBreak") == "1"), None)
+    if k is not None:
+        return k, "표지 다음", []
+    return min(1, len(tops)), "문서 처음", []
+
+
 def _insert_before(root, ref, els) -> None:
     pos = root.index(ref) if ref is not None else len(root)
     for k, el in enumerate(els):
@@ -205,6 +241,7 @@ def insert_toc(pkg: Package, kinds, *, level: int = 2, at: int | None = None,
     root, tops = _tops(pkg)
     ref = tops[at] if at is not None and at < len(tops) else None
     page_break = at is not None and ref is not None and ref.get("pageBreak") == "1"
+    anchor = ref if at is not None else None  # 자기 자리가 없는 다음 칸은 앞 칸 바로 뒤에
     for kind in [k for k in ORDER if k in set(kinds)]:
         if kind == "제목":
             mark_titles(pkg, level, titles)
@@ -213,8 +250,27 @@ def insert_toc(pkg: Package, kinds, *, level: int = 2, at: int | None = None,
             warnings.append(_EMPTY[kind])
             continue
         els = _block(pkg, kind, level, entries, ids)
+        root, tops = _tops(pkg)
+        if at is not None:
+            target, drop = anchor, []
+        else:
+            idx, reason, drop_idx = find_slot(pkg, kind)
+            own = reason == "기존 차례 칸" or reason == f"양식 {_LABEL[kind]} 자리"
+            if not own and anchor is not None:
+                target, drop = anchor, []
+            else:
+                drop = [tops[i] for i in drop_idx]
+                nxt = idx + len(drop_idx)
+                target = tops[nxt] if nxt < len(tops) else None
+                if reason == "기존 차례 칸":
+                    els[0].set("pageBreak", tops[idx].get("pageBreak", "0"))
+                elif reason == "표지 다음":
+                    page_break = True
+        for p in drop:
+            root.remove(p)
         if page_break:
             els[0].set("pageBreak", "1")
             page_break = False
-        _insert_before(root, ref, els)
+        _insert_before(root, target, els)
+        anchor = target
     return warnings
