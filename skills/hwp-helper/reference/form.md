@@ -46,3 +46,5 @@
 `python "${CLAUDE_PLUGIN_ROOT}/hwpx.py" fill <양식> <지시문.md> <결과.hwpx> --preview <폴더>`
 
 오류는 `n번째 줄: …`로 나오고 저장하지 않는다. 끝나면 `review`로 날짜·요일·달 머리·빈 칸·안내 문구를 확인한다.
+
+지난달 보고서에서 시작할 때는 `carry`가 이 지시문의 초안을 만든다(`reference/carry.md`).

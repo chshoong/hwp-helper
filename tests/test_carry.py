@@ -149,3 +149,13 @@ def test_cli_carry_to_option(blank, tmp_path, capsys):
     assert main(["carry", str(src), str(tmp_path / "o.md")]) == 2
     assert "--to" in capsys.readouterr().err
     assert main(["carry", str(src), str(tmp_path / "o.md"), "--to", "2026-10"]) == 0
+
+
+def test_skill_documents_monthly():
+    from pathlib import Path
+    root = Path(__file__).parents[1] / "skills" / "hwp-helper"
+    text = (root / "reference" / "carry.md").read_text(encoding="utf-8")
+    for word in ('hwpx.py" carry', "table-from", "--to", "확인할 것", "지어내지"):
+        assert word in text, word
+    assert "reference/carry.md" in (root / "SKILL.md").read_text(encoding="utf-8")
+    assert "---:" in (root / "reference" / "markdown.md").read_text(encoding="utf-8")

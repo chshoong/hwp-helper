@@ -46,11 +46,11 @@ def test_documented_commands_exist():
     """SKILL.md·reference에 적은 'hwpx.py <명령>'이 실제 CLI에 있어야 한다."""
     real = set(_parser()._subparsers._group_actions[0].choices)
     docs = [SKILL / "SKILL.md", *sorted((SKILL / "reference").glob("*.md"))]
-    used = {m for d in docs for m in re.findall(r"hwpx\.py\"?\s+([a-z]+)", d.read_text(encoding="utf-8"))}
+    used = {m for d in docs for m in re.findall(r"hwpx\.py\"?\s+([a-z]+(?:-[a-z]+)*)", d.read_text(encoding="utf-8"))}
     assert used and used <= real, used - real
 
 
 def test_documented_options_exist():
     text = "\n".join(p.read_text(encoding="utf-8") for p in [SKILL / "SKILL.md", *(SKILL / "reference").glob("*.md")])
     for opt in set(re.findall(r"(--[a-z]+)", text)):
-        assert opt in ("--anchors", "--json", "--mode", "--replace", "--preview", "--user", "--fit", "--doc", "--memo", "--heading", "--kinds", "--level", "--refs"), opt
+        assert opt in ("--anchors", "--json", "--mode", "--replace", "--preview", "--user", "--fit", "--doc", "--memo", "--heading", "--kinds", "--level", "--refs", "--to", "--sheet", "--range", "--caption", "--header", "--out"), opt
