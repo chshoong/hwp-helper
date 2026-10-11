@@ -95,18 +95,11 @@ def test_render_right_aligned_column(blank):
 
 
 def test_no_colon_table_unchanged(blank):
-    def build():
-        pkg = Package.open(blank)
-        append_to_body(pkg, para(LONG))
-        render_into(pkg, infer(pkg), "| 구분 | 금액 |\n|---|---|\n| 가 | 1 |\n")
-        return pkg.read(SECTION)
-    assert build() == build()
     pkg = Package.open(blank)
     append_to_body(pkg, para(LONG))
     render_into(pkg, infer(pkg), "| 구분 | 금액 |\n|---|---|\n| 가 | 1 |\n")
-    ids = {p.get("paraPrIDRef") for p in next(pkg.xml(SECTION).iter(q("hp:tbl"))).iter(q("hp:p"))}
-    assert all(_align_of(pkg, next(p for p in pkg.xml(SECTION).iter(q("hp:p")) if p.get("paraPrIDRef") == i)) != "RIGHT"
-               for i in ids)
+    tbl = next(pkg.xml(SECTION).iter(q("hp:tbl")))
+    assert all(_align_of(pkg, p) != "RIGHT" for p in tbl.iter(q("hp:p")))
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -586,16 +579,12 @@ def table_from(path, *, sheet: str | None = None, rng: str | None = None, header
                 v = cell(r, c)
                 out.append(_cell_text(_raw(v) if r < header else _show(v, col_dec[c])))
         lines.append("| " + " | ".join(out) + " |")
-        if r == header - 1 or (header == 0 and r == -1):
+        if r == max(header, 1) - 1:  # 보고서 마크다운은 첫 행을 머리로 본다
             lines.append("|" + "|".join(aligns) + "|")
-    if header == 0:
-        lines.insert(1 if caption else 0, "|" + "|".join(aligns) + "|")
     if nc > MAX_COLS:
         warnings.append(f"열이 {nc}개라 한글 쪽 폭에 다 들어가지 않을 수 있어요. 필요한 열만 범위로 골라 보세요.")
     return "\n".join(lines) + "\n", warnings
 ```
-
-`header == 0`이면 머리 행 없이 구분 줄이 맨 앞에 오는데, 보고서 마크다운 표는 첫 줄을 머리로 본다. 그래서 `--header 0`을 받으면 CLI가 "머리 행이 없으면 첫 행이 머리로 들어가요"라고 알리고, 구분 줄은 첫 행 다음에 둔다. 아래로 단순화한다. 위 `header == 0` 처리 두 곳을 지우고, 구분 줄 조건을 `if r == max(header, 1) - 1:`로 쓴다.
 
 - [ ] **Step 4: Run tests to verify they pass**
 
@@ -1094,11 +1083,11 @@ def _numbers(pkg: Package) -> list[dict]:
     moves, move_ask = _plan_moves(pkg)
     lines += [""] + moves if moves else []
     ask = _report_dates(texts) + move_ask + _numbers(pkg)
-    spec = "\n".join(lines).rstrip("\n") + "\n" if lines else ""
+    spec = "\n".join(lines) + "\n" if lines else ""
     return {"from": frm, "to": to, "spec": spec, "ask": ask, "warnings": warnings}
 ```
 
-`@칸` 뒤 빈 내용(계획 칸 비우기)은 다음 `@칸` 앞까지 빈 줄이라 `parse_fill`이 빈 칸으로 읽는다. 마지막 묶음 뒤에도 빈 줄 하나를 남겨 `"…계획\n\n"`이 되게 `rstrip` 대신 끝에 줄바꿈을 한 번 더 붙인다. 시험 `test_plan_moves_to_actual`의 기대 `"…차월(10월) 계획\n\n"`에 맞춰 위 `spec` 줄을 `"\n".join(lines) + "\n"`으로 쓴다.
+`@칸` 뒤 빈 내용(계획 칸 비우기)은 다음 `@칸` 앞까지 빈 줄이라 `parse_fill`이 빈 칸으로 읽는다.
 
 `hwpxkit/cli.py`:
 
