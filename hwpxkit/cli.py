@@ -17,6 +17,7 @@ from pathlib import Path
 from . import bridge, form
 from . import presets as presets_mod
 from . import review as review_mod
+from . import toc as toc_mod
 from .header import Header
 from .layout import hu_to_mm, page_geometry
 from .ns import q
@@ -164,6 +165,7 @@ def _cmd_render(args, workdir) -> int:
                            base_dir=md_path.parent)
     for w in warnings:
         print(f"[주의] {w}")
+    _link(pkg)
     return _save_checked(pkg, out, workdir, args.preview)
 
 
@@ -186,6 +188,11 @@ def _save_checked(pkg: Package, out: Path, workdir: Path, preview) -> int:
     elif total:
         print("[주의] 한글이 없어 수식 크기를 추정했어요. 한글이 있는 PC에서 "
               f"'hwpx.py equations {out.name} 고친결과.hwpx'로 정확히 맞출 수 있어요.")
+    if toc_mod.has_toc(pkg):
+        if bridge.available():
+            _refresh_toc_in_place(hwpx, workdir)
+        else:
+            print("[주의] 한글이 없어 차례 쪽 번호를 비워 두었어요. 한글에서 도구 → 차례 새로 고침을 눌러 주세요.")
     if hwpx != out:
         bridge.convert(hwpx, out)
     print(f"저장했어요: {out}")
@@ -227,6 +234,7 @@ def _cmd_fill(args, workdir) -> int:
     warnings = form.fill(pkg, form.parse_fill(spec.read_text(encoding="utf-8-sig")), base_dir=spec.parent)
     for w in warnings:
         print(f"[주의] {w}")
+    _link(pkg)
     return _save_checked(pkg, out, workdir, args.preview)
 
 
@@ -252,6 +260,44 @@ def _refresh_in_place(hwpx: Path, workdir: Path, total: int) -> None:
         return
     shutil.copyfile(fixed, hwpx)
     _report_refreshed(n, total)
+
+
+def _refresh_toc_in_place(hwpx: Path, workdir: Path) -> None:
+    """차례 칸을 한글로 새로 고친다. 실패해도 임시 목록 파일은 그대로 두고 안내만 한다."""
+    fixed = workdir / "toc_fixed.hwpx"
+    try:
+        _, updated = bridge.refresh_toc(hwpx, fixed)
+    except bridge.BridgeError as e:
+        print(f"[주의] 한글로 차례 쪽 번호를 채우지 못했어요 ({e}). 한글에서 도구 → 차례 새로 고침을 눌러 주세요.")
+        return
+    if not updated:
+        print("[주의] 한글이 차례를 새로 고치지 못했어요. 한글에서 도구 → 차례 새로 고침을 눌러 주세요.")
+        return
+    shutil.copyfile(fixed, hwpx)
+    print("차례 쪽 번호를 한글로 채웠어요.")
+
+
+def _link(pkg: Package) -> None:
+    n, _ = toc_mod.link_refs(pkg)
+    if n:
+        print(f"[상호 참조] 본문의 표·그림 번호 {n}곳을 한글 상호 참조로 연결했어요.")
+
+
+def _cmd_toc(args, workdir) -> int:
+    src, out = _resolve_template(args.file), Path(args.out)
+    if out.resolve() == src.resolve():
+        raise PackageError("원본 파일을 덮어쓸 수 없어요. 다른 이름으로 저장해 주세요.")
+    kinds = [k.strip() for k in args.kinds.split(",") if k.strip()]
+    pkg = _open_any(src, workdir)
+    for w in toc_mod.insert_toc(pkg, kinds, level=args.level):
+        print(f"[주의] {w}")
+    if args.refs:
+        n, why = toc_mod.link_refs(pkg)
+        if why == "chapter":
+            print("[상호 참조] 장별 번호([표 2-1])는 한글 상호 참조로 만들 수 없어 글로 두었어요. 번호가 바뀌면 renumber가 본문까지 함께 고쳐요.")
+        else:
+            print(f"[상호 참조] 본문의 표·그림 번호 {n}곳을 한글 상호 참조로 연결했어요.")
+    return _save_checked(pkg, out, workdir, args.preview)
 
 
 def _cmd_equations(args, workdir) -> int:
@@ -542,6 +588,14 @@ def _parser() -> argparse.ArgumentParser:
     s.add_argument("file")
     s.add_argument("out")
     s.set_defaults(func=_cmd_renumber)
+    s = sub.add_parser("toc", help="차례·표 목차·그림 목차 넣기 (한글이 있으면 쪽 번호까지)")
+    s.add_argument("file")
+    s.add_argument("out")
+    s.add_argument("--kinds", default="제목,표,그림", help="넣을 차례 (쉼표로): 제목,표,그림")
+    s.add_argument("--level", type=int, default=2, help="제목 차례에 넣을 단계 (기본 2: 장·절)")
+    s.add_argument("--refs", action="store_true", help="본문 표·그림 번호도 한글 상호 참조로")
+    s.add_argument("--preview", help="쪽 이미지를 만들 폴더 (한글 필요)")
+    s.set_defaults(func=_cmd_toc)
     s = sub.add_parser("presets", help="양식 없이 쓸 수 있는 프리셋 목록")
     s.add_argument("--json", action="store_true")
     s.set_defaults(func=_cmd_presets)

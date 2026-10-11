@@ -193,6 +193,24 @@ def refresh_equations(src, dst) -> tuple[Path, int]:
     return dst, int(result.get("count", 0))
 
 
+def refresh_toc(src, dst) -> tuple[Path, bool]:
+    """한글로 열어 차례 칸을 모두 새로 고치고(쪽 번호 채움) dst(.hwpx)로 저장한다. (경로, 새로 고쳤는지)."""
+    dst = Path(dst)
+    if dst.suffix.lower() != ".hwpx":
+        raise ValueError(f"차례를 새로 고친 결과는 .hwpx로 저장해요: {dst.name}")
+    if Path(src).resolve() == dst.resolve():
+        raise ValueError("원본 파일을 덮어쓸 수 없어요. 다른 이름으로 저장해 주세요.")
+    _require()
+    with _workdir() as work:
+        out = work / "out.hwpx"
+        result = _run("toc", work, src=_stage(src, work), dst=out)
+        if not out.exists():
+            raise BridgeError("차례를 새로 고친 파일이 만들어지지 않았어요.")
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(out, dst)
+    return dst, bool(result.get("updated", True))
+
+
 def page_images(path, out_dir) -> list[Path]:
     """쪽마다 PNG(96dpi)를 out_dir/page001.png … 로 만든다."""
     from PIL import Image
