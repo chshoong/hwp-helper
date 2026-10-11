@@ -180,3 +180,20 @@ def test_wide_table_warns(tmp_path):
     from hwpxkit.sheet import table_from
     (tmp_path / "w.csv").write_text(",".join(f"c{i}" for i in range(13)) + "\n" + ",".join("1" * 13) + "\n", encoding="utf-8")
     assert any("열이 13개" in w for w in table_from(tmp_path / "w.csv")[1])
+
+
+def test_cli_table_from(tmp_path, capsys):
+    from hwpxkit.cli import main
+    (tmp_path / "u.csv").write_text("구분,금액\n가,1200\n", encoding="utf-8")
+    assert main(["table-from", str(tmp_path / "u.csv"), "--caption", "금액"]) == 0
+    out = capsys.readouterr().out
+    assert out.splitlines()[0] == "표: 금액" and "| 가 | 1,200 |" in out
+    assert main(["table-from", str(tmp_path / "u.csv"), "--out", str(tmp_path / "t.md")]) == 0
+    assert "| 가 | 1,200 |" in (tmp_path / "t.md").read_text(encoding="utf-8")
+
+
+def test_cli_table_from_error(tmp_path, capsys):
+    from hwpxkit.cli import main
+    (tmp_path / "y.xls").write_bytes(b"x")
+    assert main(["table-from", str(tmp_path / "y.xls")]) == 2
+    assert ".xlsx로 저장" in capsys.readouterr().err
