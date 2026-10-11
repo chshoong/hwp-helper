@@ -274,3 +274,66 @@ def insert_toc(pkg: Package, kinds, *, level: int = 2, at: int | None = None,
         _insert_before(root, target, els)
         anchor = target
     return warnings
+_CHAPTER = re.compile(r"(표|그림)\s*\d+\s*[-–.]\s*\d+")
+_REF = re.compile(r"(?<![가-힣A-Za-z])(표|그림)\s*(\d+)(?!\s*[-–.]?\s*\d)")
+
+
+def uses_chapter_numbers(pkg: Package) -> bool:
+    """캡션이 '[표 2-1]'처럼 장별 번호인가 (한글 상호 참조 번호로는 만들 수 없음)."""
+    return any(_CHAPTER.search(all_text(cap)) for sec in pkg.section_names()
+               for cap in pkg.xml(sec).iter(q("hp:caption")))
+
+
+def _crossref(ids: _Ids, kind: str, obj_id: str):
+    target = "0" if kind == "표" else "1"
+    return _field_begin(ids, "CROSSREF", [
+        ("boolean", "Fiexde", "1"), ("integer", "Prop", "0"),
+        ("string", "Command", f"?#{obj_id};{target};1;0;0;"), ("string", "RefPath", f"?#{obj_id};"),
+        ("string", "RefType", "TARGET_TABLE" if kind == "표" else "TARGET_PICTURE"),
+        ("string", "RefContentType", "OBJECT_TYPE_NUMBER"), ("boolean", "RefHyperLink", "false"),
+        ("string", "RefOpenType", "HWPHYPERLINK_JUMP_CURRENTTAB")])
+
+
+def _t(text: str):
+    t = etree.Element(q("hp:t"))
+    t.text = text
+    return t
+
+
+def _link_t(run, t, objs: dict, ids: _Ids) -> int:
+    text, pos, out, n = t.text, 0, [], 0
+    for m in _REF.finditer(text):
+        kind, num = m.group(1), int(m.group(2))
+        if not 1 <= num <= len(objs[kind]):
+            continue
+        fb = _crossref(ids, kind, objs[kind][num - 1].get("id"))
+        if text[pos:m.start(2)]:
+            out.append(_t(text[pos:m.start(2)]))
+        out += [_ctrl(fb), _t(m.group(2)), _ctrl(_field_end(fb))]
+        pos, n = m.end(2), n + 1
+    if not n:
+        return 0
+    if text[pos:]:
+        out.append(_t(text[pos:]))
+    at = list(run).index(t)
+    run.remove(t)
+    for k, el in enumerate(out):
+        run.insert(at + k, el)
+    return n
+
+
+def link_refs(pkg: Package) -> tuple[int, str | None]:
+    """본문의 '[표 3]', '그림 2'의 번호를 한글 상호 참조로 바꾼다. 장별 번호 문서는 그대로."""
+    if uses_chapter_numbers(pkg):
+        return 0, "chapter"
+    root, tops = _tops(pkg)
+    objs = {k: [o for o in root.iter(q(tag)) if o.find(q("hp:caption")) is not None] for k, tag in _TAG.items()}
+    skip, ids, n = _in_toc(tops), _Ids(pkg), 0
+    for i, p in enumerate(tops):
+        if i in skip:
+            continue
+        for run in p.findall(q("hp:run")):  # 바로 아래 글만: 표 칸·캡션 안 글은 제외
+            for t in list(run.findall(q("hp:t"))):
+                if len(t) == 0 and t.text:
+                    n += _link_t(run, t, objs, ids)
+    return n, None

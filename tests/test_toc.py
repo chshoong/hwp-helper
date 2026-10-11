@@ -163,3 +163,60 @@ def test_slot_document_start(blank, tmp_path):
     from hwpxkit import toc
     pkg = make_doc(blank, tmp_path)
     assert toc.find_slot(pkg, "표") == (1, "문서 처음", [])
+
+
+def crossrefs(pkg):
+    return [fb for fb in pkg.xml(SECTION).iter(q("hp:fieldBegin")) if fb.get("type") == "CROSSREF"]
+
+
+def params(fb):
+    return {e.get("name"): e.text for e in fb.find(q("hp:parameters"))}
+
+
+def test_link_number_becomes_crossref(blank, tmp_path):
+    from hwpxkit import toc
+    pkg = make_doc(blank, tmp_path)
+    n, why = toc.link_refs(pkg)
+    assert (n, why) == (1, None)
+    fb = crossrefs(pkg)[0]
+    tbl2 = [t for t in pkg.xml(SECTION).iter(q("hp:tbl")) if t.find(q("hp:caption")) is not None][1]
+    pr = params(fb)
+    assert pr["Command"] == f"?#{tbl2.get('id')};0;1;0;0;" and pr["RefType"] == "TARGET_TABLE"
+    assert pr["RefContentType"] == "OBJECT_TYPE_NUMBER" and pr["RefPath"] == f"?#{tbl2.get('id')};"
+    p = next(p for p in tops(pkg) if "를 본다" in own_text(p))
+    assert own_text(p).endswith("[표 2]를 본다.")
+    run = fb.getparent().getparent()
+    i = [el.tag for el in run].index(q("hp:ctrl"))
+    assert run[i + 1].text == "2" and run[i + 2].find(q("hp:fieldEnd")) is not None
+    assert toc.link_refs(pkg) == (0, None)  # 다시 해도 같음
+
+
+def test_link_picture(blank, tmp_path):
+    from hwpxkit import toc
+    pkg = make_doc(blank, tmp_path, md="# 제1장\n\n![그림](g.png)\n\n그림 1에서 보듯이 결과가 좋다. " + LONG + "\n")
+    assert toc.link_refs(pkg) == (1, None)
+    pr = params(crossrefs(pkg)[0])
+    assert pr["RefType"] == "TARGET_PICTURE" and ";1;1;0;0;" in pr["Command"]
+
+
+def test_link_skips_missing_and_chapter_like(blank, tmp_path):
+    from hwpxkit import toc
+    pkg = make_doc(blank, tmp_path, md=DOC_MD.replace("[표 2]를 본다.", "[표 5]와 표 2-1, 도표 1을 본다."))
+    assert toc.link_refs(pkg) == (0, None)
+
+
+def test_link_skips_cells_captions_and_toc(blank, tmp_path):
+    from hwpxkit import toc
+    pkg = make_doc(blank, tmp_path, md=DOC_MD.replace("| 1 | 2 |", "| 표 1 | 2 |").replace("[표 2]를 본다.", "본다."))
+    toc.insert_toc(pkg, ["표"], at=1)
+    assert toc.link_refs(pkg) == (0, None)
+
+
+def test_chapter_numbered_document_untouched(blank, tmp_path):
+    from hwpxkit import toc
+    pkg = make_doc(blank, tmp_path)
+    cap = next(pkg.xml(SECTION).iter(q("hp:caption")))
+    t = next(cap.iter(q("hp:t")))
+    t.text = "[표 1-1] 첫째 표"
+    assert toc.uses_chapter_numbers(pkg) is True
+    assert toc.link_refs(pkg) == (0, "chapter")
