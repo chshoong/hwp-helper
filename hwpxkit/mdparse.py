@@ -75,8 +75,15 @@ class Note:
     spans: list[Span]
 
 
-Block = Heading | Bullet | Para | Table | Figure | Math | PageBreak | Note
+@dataclass
+class Toc:
+    """[차례] [표 목차] [그림 목차] 줄: 그 자리에 한글 차례 칸."""
+    kind: str  # "제목" | "표" | "그림"
 
+
+Block = Heading | Bullet | Para | Table | Figure | Math | PageBreak | Note | Toc
+
+_TOC_LINE = re.compile(r"^\[\s*(차\s*례|목\s*차|표\s*목\s*차|표\s*차\s*례|그림\s*목\s*차|그림\s*차\s*례)\s*\]$")
 _HEADING = re.compile(r"^(#{1,5})\s+(.*)$")
 _BULLET = re.compile(r"^([□○◦❍\-–·∙•])\s+(.*)$")
 _NOTE = re.compile(r"^([*※])\s+(.*)$")
@@ -182,6 +189,12 @@ def parse(md: str) -> list[Block]:
         m = _TABLE_CAPTION.match(line)
         if m:
             caption = (m.group(1), _attrs(m.group(2), lineno), lineno)
+            i += 1
+            continue
+        m = _TOC_LINE.match(line)
+        if m:
+            word = re.sub(r"\s+", "", m.group(1))
+            blocks.append(Toc("표" if word.startswith("표") else "그림" if word.startswith("그림") else "제목"))
             i += 1
             continue
         if line == "---쪽---":

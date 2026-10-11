@@ -21,7 +21,7 @@ from .eqsize import estimate
 from .equation import EquationError, latex_to_hwp
 from .header import Header
 from .layout import distribute, fit_image, page_geometry
-from .mdparse import BULLETS, Bullet, Figure, Heading, Math, Note, PageBreak, Para, Span, Table, parse, parse_inline
+from .mdparse import BULLETS, Bullet, Figure, Heading, Math, Note, PageBreak, Para, Span, Table, Toc, parse, parse_inline
 from .ns import q
 from .package import Package
 from .samples import BODY_FROM, EQ_NUMBER, Catalog, ParaStyle
@@ -58,6 +58,8 @@ class Renderer:
         self.base_dir = Path(base_dir)
         self.geo = page_geometry(pkg)
         self.ids = IdAllocator(pkg)
+        self.toc_marks = []  # [차례] 자리표 문단과 종류
+        self.heading_els = []  # 렌더한 제목 문단과 단계 (제목 차례 표시용)
         self.labels: dict[str, str] = {}
         self._warnings: list[str] = []
         self._numbers: dict[int, str] = {}
@@ -139,13 +141,19 @@ class Renderer:
     # 블록 -----------------------------------------------------------------
     def _block(self, b) -> list[etree._Element]:
         if isinstance(b, Heading):
-            return self._para(f"h{min(b.level, 5)}", b.spans)
+            els = self._para(f"h{min(b.level, 5)}", b.spans)
+            self.heading_els.append((els[-1], b.level))
+            return els
         if isinstance(b, Bullet):
             return self._bullet(b)
         if isinstance(b, Para):
             return self._para("body", b.spans)
         if isinstance(b, Note):
             return self._note(b)
+        if isinstance(b, Toc):
+            p = self._make_p(self.cat.require("body"), [])
+            self.toc_marks.append((p, b.kind))
+            return [p]
         if isinstance(b, PageBreak):
             self._page_break = True
             return []
@@ -646,4 +654,15 @@ def render_into(pkg: Package, catalog: Catalog, md: str, *, mode: str = "new",
         for el in els:
             root.append(el)
     _unnumber_captionless(pkg)
+    if r.toc_marks:
+        from .toc import insert_toc
+        root = pkg.edit(name)
+        first_p = next(p for p in root if p.tag == q("hp:p"))  # 맨 앞 제목은 이 문단(쪽 설정)에 합쳐졌을 수 있다
+        titles = [p if p.getparent() is not None else first_p for p, lvl in r.heading_els if lvl <= 2]
+        for marker, kind in r.toc_marks:
+            ps = [p for p in root if p.tag == q("hp:p")]
+            merged = marker.getparent() is None  # 맨 앞 블록이라 첫 문단(쪽 설정)에 합쳐짐
+            r._warnings += insert_toc(pkg, [kind], at=1 if merged else ps.index(marker), titles=titles)
+            if not merged:
+                root.remove(marker)
     return r.warnings

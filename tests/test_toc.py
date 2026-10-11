@@ -294,3 +294,30 @@ def test_review_flags_stale_toc(blank, tmp_path):
     pkg = make_doc(blank, tmp_path)
     toc.insert_toc(pkg, ["표"], at=1)
     assert [f.code for f in review(pkg)].count("toc-stale") == 1
+
+
+def test_parse_toc_lines():
+    from hwpxkit.mdparse import Toc, parse
+    blocks = parse("[차례]\n[ 표 목차 ]\n[그림 차례]\n[목차]\n")
+    assert [b.kind for b in blocks] == ["제목", "표", "그림", "제목"] and all(isinstance(b, Toc) for b in blocks)
+
+
+def test_render_toc_blocks_in_place(blank, tmp_path):
+    from hwpxkit import toc
+    md = "# 제1장 서론\n\n[차례]\n\n[표 목차]\n\n---쪽---\n\n" + DOC_MD.split("\n", 2)[2]
+    pkg = make_doc(blank, tmp_path, md=md)
+    ps = tops(pkg)
+    blocks = toc.toc_blocks(ps)
+    assert [m for _, _, m in blocks] == [65, 2]
+    assert own_text(ps[blocks[0][0] - 1]).endswith("제1장 서론")
+    after = blocks[-1][1] + 1
+    assert ps[after].get("pageBreak") == "1"
+    marked = [own_text(p) for p in ps if next(p.iter(q("hp:titleMark")), None) is not None]
+    assert "제1장 서론" in marked and "1.1 연구 배경" in marked
+
+
+def test_toc_block_first_in_document(blank, tmp_path):
+    from hwpxkit import toc
+    pkg = make_doc(blank, tmp_path, md="[차례]\n\n" + DOC_MD)
+    blocks = toc.toc_blocks(tops(pkg))
+    assert [m for _, _, m in blocks] == [65] and blocks[0][0] == 1
