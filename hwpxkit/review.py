@@ -342,10 +342,22 @@ def _check_guide_text(pkg: Package) -> list[Finding]:
     return out
 
 
+def _check_toc(pkg: Package) -> list[Finding]:
+    """차례 칸의 항목에 쪽 번호(탭)가 하나도 없으면 아직 새로 고치지 않은 것."""
+    from .toc import toc_blocks
+    tops = [p for p in pkg.xml(pkg.section_names()[0]) if p.tag == q("hp:p")]
+    for s, e, _ in toc_blocks(tops):
+        items = tops[s + 1:e]
+        if items and not any(next(p.iter(q("hp:tab")), None) is not None for p in items):
+            return [Finding("확인", "toc-stale",
+                            "차례 쪽 번호가 비어 있어요. 한글에서 도구 → 차례 새로 고침을 눌러 주세요.")]
+    return []
+
+
 def review(pkg: Package) -> list[Finding]:
     texts = _texts(pkg)
     period = _period(texts)
     notes = [Finding("확인", "mixed-format", n) for n in infer(pkg).notes
              if "섞여" in n and not n.startswith("빈 줄")]  # 빈 줄 서식 차이는 눈에 보이지 않음
     return (_check_dates(texts, period) + _check_month_headers(pkg, period) + _check_numbering(pkg)
-            + _check_cells(pkg) + _check_fonts(pkg) + _check_guide_text(pkg) + notes)
+            + _check_cells(pkg) + _check_fonts(pkg) + _check_guide_text(pkg) + _check_toc(pkg) + notes)

@@ -1,5 +1,6 @@
 """차례·표목차·그림목차(한글 차례 칸)와 상호 참조."""
 import re
+from pathlib import Path
 
 import pytest
 
@@ -220,3 +221,76 @@ def test_chapter_numbered_document_untouched(blank, tmp_path):
     t.text = "[표 1-1] 첫째 표"
     assert toc.uses_chapter_numbers(pkg) is True
     assert toc.link_refs(pkg) == (0, "chapter")
+
+
+def test_cli_toc_without_hangul(blank, tmp_path, monkeypatch, capsys):
+    from hwpxkit import bridge
+    from hwpxkit.cli import main
+    monkeypatch.setattr(bridge, "available", lambda: False)
+    src = make_doc(blank, tmp_path).save(tmp_path / "보고서.hwpx")
+    out = tmp_path / "차례.hwpx"
+    assert main(["toc", str(src), str(out), "--kinds", "제목,표", "--refs"]) == 0
+    text = capsys.readouterr().out
+    assert "차례 새로 고침" in text and "상호 참조" in text
+    from hwpxkit import toc
+    pkg = Package.open(out)
+    assert [m for _, _, m in toc.toc_blocks(tops(pkg))] == [65, 2]
+
+
+def test_save_without_hangul_explains_toc(blank, tmp_path, monkeypatch, capsys):
+    from hwpxkit import bridge
+    from hwpxkit.cli import main
+    monkeypatch.setattr(bridge, "available", lambda: False)
+    md = tmp_path / "새.md"
+    (tmp_path / "g.png").write_bytes(tiny_png())
+    md.write_text("[차례]\n\n" + DOC_MD.format(long=LONG), encoding="utf-8")
+    out = tmp_path / "결과.hwpx"
+    assert main(["render", str(blank), str(md), str(out)]) == 0
+    text = capsys.readouterr().out
+    assert out.exists() and "차례 새로 고침" in text
+
+
+def test_render_links_refs(blank, tmp_path, monkeypatch, capsys):
+    from hwpxkit import bridge
+    from hwpxkit.cli import main
+    monkeypatch.setattr(bridge, "available", lambda: False)
+    md = tmp_path / "새.md"
+    (tmp_path / "g.png").write_bytes(tiny_png())
+    md.write_text(DOC_MD.format(long=LONG), encoding="utf-8")
+    out = tmp_path / "결과.hwpx"
+    assert main(["render", str(blank), str(md), str(out)]) == 0
+    assert "상호 참조로 연결" in capsys.readouterr().out
+    assert crossrefs(Package.open(out))
+
+
+def test_cli_toc_bad_kind(blank, tmp_path, capsys):
+    from hwpxkit.cli import main
+    src = make_doc(blank, tmp_path).save(tmp_path / "보고서.hwpx")
+    assert main(["toc", str(src), str(tmp_path / "o.hwpx"), "--kinds", "수식"]) == 2
+    assert "제목·표·그림" in capsys.readouterr().err
+
+
+def test_refresh_toc_uses_bridge_action(tmp_path, monkeypatch):
+    from hwpxkit import bridge
+    seen = {}
+
+    def fake_run(action, work, *, src=None, dst=None, fmt=None, timeout=0):
+        seen["action"] = action
+        Path(dst).write_bytes(b"x")
+        return {"ok": True}
+    monkeypatch.setattr(bridge, "_require", lambda: None)
+    monkeypatch.setattr(bridge, "_run", fake_run)
+    src = tmp_path / "a.hwpx"
+    src.write_bytes(b"y")
+    out = bridge.refresh_toc(src, tmp_path / "b.hwpx")
+    assert seen["action"] == "toc" and out.read_bytes() == b"x"
+    with pytest.raises(ValueError):
+        bridge.refresh_toc(src, src)
+
+
+def test_review_flags_stale_toc(blank, tmp_path):
+    from hwpxkit import toc
+    from hwpxkit.review import review
+    pkg = make_doc(blank, tmp_path)
+    toc.insert_toc(pkg, ["표"], at=1)
+    assert [f.code for f in review(pkg)].count("toc-stale") == 1

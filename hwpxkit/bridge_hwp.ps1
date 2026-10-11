@@ -71,6 +71,13 @@ try {
       $r = $hwp.SaveAs($Dst, "HWPX", "")
       Emit @{ ok = [bool]$r; pages = $pages; count = $n }
     }
+    "toc" {
+      # 문서 안 차례 칸(TABLEOFCONTENTS)을 한글이 다시 만들고 쪽 번호를 채운다 (MakeContents는 한글이 죽어 쓰지 않음)
+      $u = $hwp.HAction.Run("UpdateAllContents")
+      ToTop $hwp
+      $r = $hwp.SaveAs($Dst, "HWPX", "")
+      Emit @{ ok = [bool]$r; pages = $pages; updated = [bool]$u }
+    }
     default   { Emit @{ ok = $false; error = "unknown_action" } }
   }
 }
