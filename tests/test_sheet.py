@@ -1,5 +1,10 @@
 """엑셀·CSV를 보고서 마크다운 표로 (table-from), 표 열 정렬."""
 import zipfile
+from xml.sax.saxutils import escape as _esc
+
+
+def escape(s):
+    return _esc(s, {"\"": "&quot;"})
 from pathlib import Path
 
 import pytest
@@ -63,7 +68,7 @@ def make_xlsx(path, sheets, shared=(), numfmts=(), xfs=(0,)):
     z.writestr("xl/sharedStrings.xml", f'<sst xmlns="{M}">' + "".join(
         f"<si><t>{s}</t></si>" for s in shared) + "</sst>")
     z.writestr("xl/styles.xml", f'<styleSheet xmlns="{M}"><numFmts>' + "".join(
-        f'<numFmt numFmtId="{i}" formatCode="{c}"/>' for i, c in numfmts) + "</numFmts><cellXfs>" + "".join(
+        f'<numFmt numFmtId="{i}" formatCode="{escape(c)}"/>' for i, c in numfmts) + "</numFmts><cellXfs>" + "".join(
         f'<xf numFmtId="{n}"/>' for n in xfs) + "</cellXfs></styleSheet>")
     for i, n in enumerate(names):
         body = sheets[n]
@@ -197,3 +202,58 @@ def test_cli_table_from_error(tmp_path, capsys):
     (tmp_path / "y.xls").write_bytes(b"x")
     assert main(["table-from", str(tmp_path / "y.xls")]) == 2
     assert ".xlsx로 저장" in capsys.readouterr().err
+
+
+# ---- 최종 리뷰 반영 ----
+
+def _one(tmp_path, value, code, name="x.xlsx"):
+    from hwpxkit.sheet import table_from
+    p = make_xlsx(tmp_path / name, {"S": row(1, s("A1", 0)) + row(2, n("A2", value, 1))},
+                  shared=["값"], numfmts=[(164, code)], xfs=(0, 164))
+    md, warnings = table_from(p)
+    return md.strip().splitlines()[2], warnings
+
+
+def test_rounding_half_up_like_excel(tmp_path):
+    """I5: 엑셀처럼 반올림 (0.125 → 13%, 2.5 → 3)."""
+    assert _one(tmp_path, 0.125, "0%", "a.xlsx")[0] == "| 13% |"
+    assert _one(tmp_path, 2.5, "0", "b.xlsx")[0] == "| 3 |"
+    assert _one(tmp_path, 0.5, "#,##0", "c.xlsx")[0] == "| 1 |"
+
+
+def test_percent_point_and_thousand_scaling(tmp_path):
+    """I5: 따옴표 속 %p는 글자, 끝 쉼표는 천 단위 나누기 (#,##0, → 천원)."""
+    assert _one(tmp_path, 2.5, '0.0"%p"', "a.xlsx")[0] == "| 2.5%p |"
+    assert _one(tmp_path, 12345000, "#,##0,", "b.xlsx")[0] == "| 12,345 |"
+    assert _one(tmp_path, 12345000000, "#,##0,,", "c.xlsx")[0] == "| 12,345 |"
+
+
+def test_unknown_format_falls_back_with_warning(tmp_path):
+    """I5: 모르는 서식(@ 등)은 일반 숫자로 보여 주고 알린다."""
+    cell, warnings = _one(tmp_path, 12.5, "@")
+    assert cell == "| 12.5 |" and any("서식" in w for w in warnings)
+
+
+def test_year_column_and_leading_zero(tmp_path):
+    """I6: 연도 열은 쉼표 없이, CSV의 '007'은 글자 그대로."""
+    from hwpxkit.sheet import table_from
+    p = make_xlsx(tmp_path / "y.xlsx", {"S": row(1, s("A1", 0)) + row(2, n("A2", 2025)) + row(3, n("A3", 2026))},
+                  shared=["연도"])
+    assert table_from(p)[0].strip().splitlines()[2:] == ["| 2025 |", "| 2026 |"]
+    (tmp_path / "z.csv").write_text("코드,금액\n007,1200\n", encoding="utf-8")
+    assert table_from(tmp_path / "z.csv")[0].strip().splitlines()[2] == "| 007 | 1,200 |"
+
+
+def test_date1904_workbook(tmp_path):
+    """I7: 1904 날짜 체계 통합 문서."""
+    from hwpxkit.sheet import table_from
+    p = make_xlsx(tmp_path / "d.xlsx", {"S": row(1, s("A1", 0)) + row(2, n("A2", 44833, 1))},
+                  shared=["날짜"], xfs=(0, 14))
+    z = zipfile.ZipFile(p)
+    parts = {i: z.read(i) for i in z.namelist()}
+    z.close()
+    parts["xl/workbook.xml"] = parts["xl/workbook.xml"].replace(b"<sheets>", b'<workbookPr date1904="1"/><sheets>')
+    with zipfile.ZipFile(p, "w") as z:
+        for k, v in parts.items():
+            z.writestr(k, v)
+    assert table_from(p)[0].strip().splitlines()[2] == "| 2026. 9. 30. |"

@@ -77,9 +77,9 @@ def test_plan_moves_to_actual(blank):
     from hwpxkit.carry import carry
     r = carry(monthly(blank))
     spec = r["spec"]
-    assert "@칸 표1 | 과제 1 | 금월(9월) 실적\n모형 시험\n- 시범 자료 검증\n" in spec
-    assert "@칸 표1 | 과제 1 | 차월(10월) 계획\n\n" in spec
-    assert "과제 2 | 금월" not in spec  # 계획이 빈 행은 건너뜀
+    assert "@칸 표1 | #2 | #2\n모형 시험\n- 시범 자료 검증\n" in spec
+    assert "@칸 표1 | #2 | #3\n\n" in spec
+    assert "@칸 표1 | #3 |" not in spec  # 계획이 빈 행은 건너뜀
     plans = [a for a in r["ask"] if a["kind"] == "next-plan"]
     assert len(plans) == 1 and "과제 1" in plans[0]["where"]
 
@@ -89,7 +89,7 @@ def test_numbers_asked_not_invented(blank):
     r = carry(monthly(blank))
     nums = {a["current"]: a for a in r["ask"] if a["kind"] == "number"}
     assert set(nums) == {"45%", "1,200"}
-    assert nums["45%"]["address"].startswith("@칸 표2 | 진행률")
+    assert nums["45%"]["address"] == "@칸 표2 | #2 | #2"
     assert "45%" not in r["spec"]
 
 
@@ -97,7 +97,7 @@ def test_ambiguous_plan_columns(blank):
     from hwpxkit.carry import carry
     pkg = Package.open(blank)
     append_to_body(pkg, para("‘26년 9월 월간 보고"))
-    append_to_body(pkg, table(2, 4, texts={(0, 0): "과제", (0, 1): "금월 실적", (0, 2): "차월 계획", (0, 3): "연간 계획",
+    append_to_body(pkg, table(2, 4, texts={(0, 0): "과제", (0, 1): "금월 실적", (0, 2): "차월 계획", (0, 3): "익월 추진 계획",
                                             (1, 0): "가", (1, 1): "a", (1, 2): "b", (1, 3): "c"}))
     r = carry(pkg)
     assert "@칸" not in r["spec"] and any(a["kind"] == "plan-columns" for a in r["ask"])
@@ -159,3 +159,80 @@ def test_skill_documents_monthly():
         assert word in text, word
     assert "reference/carry.md" in (root / "SKILL.md").read_text(encoding="utf-8")
     assert "---:" in (root / "reference" / "markdown.md").read_text(encoding="utf-8")
+
+
+# ---- 최종 리뷰 반영 ----
+
+def _doc(blank, paras, tables=()):
+    pkg = Package.open(blank)
+    for p in paras:
+        append_to_body(pkg, para(p))
+    for t in tables:
+        append_to_body(pkg, t)
+    return pkg
+
+
+def _apply(pkg, tmp_path):
+    from hwpxkit.carry import carry
+    r = carry(pkg)
+    fill(pkg, parse_fill(r["spec"]), base_dir=tmp_path)
+    texts = [t.text for t in pkg.xml(SECTION).iter() if t.tag.endswith("}t") and t.text]
+    return r, texts
+
+
+def test_dot_month_not_inside_full_date(blank, tmp_path):
+    """C1: '2026. 9.'를 바꾸는 줄이 '2026. 9. 15.' 같은 다른 날짜까지 바꾸면 앞뒤 글을 붙여 그 자리만 바꾼다."""
+    r, texts = _apply(_doc(blank, ["‘26년 9월 월간 보고", "기간 2026. 9.", "2026. 9. 15. 회의 개최"]), tmp_path)
+    assert "2026. 9. 15. 회의 개최" in texts and "기간 2026. 10." in texts
+
+
+def test_report_date_not_touched_by_replacements(blank, tmp_path):
+    """C1: 보고일 줄은 바꾸기 줄이 건드리지 않는다."""
+    r, texts = _apply(_doc(blank, ["‘26년 9월 월간 보고", "보고일: 2026. 10. 5.(월)", "차월 계획 기간 2026. 10."]), tmp_path)
+    assert "보고일: 2026. 10. 5.(월)" in texts
+
+
+def test_other_year_head_untouched(blank, tmp_path):
+    """C2: '2025년 9월 말'처럼 다른 해의 같은 달은 바꾸지 않는다."""
+    r, texts = _apply(_doc(blank, ["‘26년 9월 월간 보고", "2025년 9월 말 기준 누적, 9월 말 현재"]), tmp_path)
+    assert any("2025년 9월 말" in t and "10월 말 현재" in t for t in texts)
+
+
+def test_bare_plan_actual_not_moved(blank):
+    """C3: 달 표시 없는 '계획 | 실적'(목표 대비 실적 표)은 옮기지 않고 확인할 것으로."""
+    from hwpxkit.carry import carry
+    pkg = _doc(blank, ["‘26년 9월 월간 보고"], [table(2, 4, texts={
+        (0, 0): "지표", (0, 1): "계획", (0, 2): "실적", (0, 3): "달성률",
+        (1, 0): "논문", (1, 1): "3편", (1, 2): "2편", (1, 3): "67%"})])
+    r = carry(pkg)
+    assert "@칸" not in r["spec"] and any(a["kind"] == "plan-columns" for a in r["ask"])
+
+
+def test_headers_renamed_by_replacements_still_fill(blank, tmp_path):
+    """I1: 머리에 '(26. 09.)'·'9월 실적'이 있어 바꾸기로 머리가 바뀌어도 옮기기가 맞는 칸을 찾는다."""
+    for heads in (("금월 실적 (26. 09.)", "차월 계획 (26. 10.)"), ("9월 실적", "10월 계획")):
+        pkg = _doc(blank, ["‘26년 9월 월간 보고"], [table(2, 3, texts={
+            (0, 0): "과제", (0, 1): heads[0], (0, 2): heads[1], (1, 0): "가", (1, 1): "a", (1, 2): "b"})])
+        r, texts = _apply(pkg, tmp_path)
+        from hwpxkit.form import cells
+        row = {c.col: c.text for c in cells(pkg) if c.table == 1 and c.row == 1}
+        assert row == {0: "가", 1: "b", 2: ""}, heads
+
+
+def test_overlapping_olds_fill_ok(blank, tmp_path):
+    """I2: '2026년 9월 실적'처럼 겹치는 글이어도 채우기가 멈추지 않는다."""
+    r, texts = _apply(_doc(blank, ["‘26년 9월 월간 보고", "2026년 9월 실적 요약"]), tmp_path)
+    assert "2026년 10월 실적 요약" in texts
+
+
+def test_cross_month_range(blank, tmp_path):
+    """I3: 달을 넘는 기간은 끝 날짜도 따로 한 달 넘긴다."""
+    r, texts = _apply(_doc(blank, ["‘26년 9월 월간 보고", "시험 기간: 2026. 9. 15. ~ 10. 14."]), tmp_path)
+    assert "시험 기간: 2026. 10. 15. ~ 11. 14." in texts
+
+
+def test_korean_full_dates_asked(blank, tmp_path):
+    """I4: '2026년 8월 31일'처럼 일까지 쓴 날짜는 바꾸지 않고 확인할 것으로 (9월 31일 같은 없는 날짜 방지)."""
+    r, texts = _apply(_doc(blank, ["‘26년 8월 월간 보고", "2026년 8월 31일 완료"]), tmp_path)
+    assert "2026년 8월 31일 완료" in texts
+    assert any(a["kind"] == "date" and "8월 31일" in a["current"] for a in r["ask"])

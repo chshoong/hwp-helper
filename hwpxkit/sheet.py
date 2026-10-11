@@ -6,6 +6,7 @@ import datetime as dt
 import io
 import re
 import zipfile
+from decimal import ROUND_HALF_UP, Decimal
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -72,6 +73,8 @@ def _read_xlsx(path: Path, sheet: str | None):
         rels = _xml(z, "xl/_rels/workbook.xml.rels")
         if wb is None or rels is None:
             raise SheetError(f"엑셀 파일 구조를 읽지 못했어요. {_SAVE_AS}")
+        pr = wb.find(f"{_M}workbookPr")
+        shift = 1462 if pr is not None and pr.get("date1904") in ("1", "true") else 0  # 1904 체계 → 1900 체계
         sheets = [(s.get("name"), s.get(f"{_R}id")) for s in wb.iter(f"{_M}sheet")]
         names = [n for n, _ in sheets]
         if sheet is None:
@@ -112,7 +115,7 @@ def _read_xlsx(path: Path, sheet: str | None):
         elif v is not None and v.text:
             fid = xf_fmt[int(c.get("s", "0"))] if xf_fmt else 0
             code = "date" if fid in _DATE_IDS or _is_date(fmts.get(fid, "General")) else fmts.get(fid, "General")
-            grid[(r, col)] = Value("number", number=float(v.text), fmt=code)
+            grid[(r, col)] = Value("number", number=float(v.text) + (shift if code == "date" else 0), fmt=code)
         elif c.find(f"{_M}f") is not None:
             grid[(r, col)] = Value("text", "")  # 범위에는 넣고 빈 칸으로
             warnings.append(f"{c.get('r')} 칸의 수식 결과가 저장되어 있지 않아 비워 두었어요. 엑셀에서 열어 저장한 뒤 다시 해 주세요.")
@@ -146,7 +149,7 @@ def _read_csv(path: Path):
     for r, cells in enumerate(csv.reader(io.StringIO(text), delimiter=delim)):
         for c, cell in enumerate(cells):
             cell = cell.strip()
-            if _NUMBER_TEXT.match(cell):
+            if _NUMBER_TEXT.match(cell) and not re.match(r"^[-+]?0\d", cell):
                 grid[(r, c)] = Value("number", number=float(cell.replace(",", "")))
             elif cell:
                 grid[(r, c)] = Value("text", cell)
@@ -164,18 +167,44 @@ def _plain_decimals(x: float) -> int:
     return min(4, len(s.split(".")[1])) if "." in s and "e" not in s else 0
 
 
-def _show(v: Value, col_dec: int) -> str:
+def _round(x: float, dec: int, group: bool) -> str:
+    """엑셀처럼 반올림(0.5는 올림)하고 자리를 맞춘다."""
+    q = Decimal(repr(x)).quantize(Decimal(1).scaleb(-dec), rounding=ROUND_HALF_UP)
+    return f"{q:,.{dec}f}" if group else f"{q:.{dec}f}"
+
+
+_LITERAL = re.compile(r'"([^"]*)"|\\(.)')
+_UNKNOWN = re.compile(r"@|\?/|[eE][+-]")
+
+
+def _show(v: Value, col_dec: int, group: bool = True, unknown: set | None = None) -> str:
     if v.kind != "number":
         return v.text
     if v.fmt == "date":
         d = dt.date(1899, 12, 30) + dt.timedelta(days=int(v.number))
         return f"{d.year}. {d.month}. {d.day}."
-    if "%" in v.fmt:
-        return f"{v.number * 100:,.{_decimals(v.fmt)}f}%"
     if v.fmt == "General":
-        return f"{v.number:,.{col_dec}f}"
-    dec = _decimals(v.fmt)
-    return f"{v.number:,.{dec}f}" if "," in v.fmt else f"{v.number:.{dec}f}"
+        return _round(v.number, col_dec, group)
+    section = v.fmt.split(";")[0]
+    clean = re.sub(r'"[^"]*"|\[[^\]]*\]|\\.|_.|\*.', "", section)  # 따옴표 글자·[색]·\x·_x 빼고
+    if _UNKNOWN.search(clean) or not re.search(r"[0#?]", clean):
+        if unknown is not None:
+            unknown.add(v.fmt)
+        return _round(v.number, _plain_decimals(v.number), group)
+    lits = [(m.start(), m.group(1) if m.group(1) is not None else m.group(2)) for m in _LITERAL.finditer(section)]
+    masked = _LITERAL.sub(lambda m: " " * len(m.group(0)), section)  # 따옴표 속 기호는 서식이 아님
+    first = re.search(r"[0#?]", masked).start()
+    last = max(m.end() for m in re.finditer(r"[0#?%,.]", masked))
+    prefix = "".join(t for pos, t in lits if pos < first)
+    suffix = "".join(t for pos, t in lits if pos >= last)
+    x = v.number
+    scale = re.search(r"[0#?](,+)(?![0#?])", clean)
+    if scale:
+        x /= 1000 ** len(scale.group(1))
+    if "%" in clean:
+        x *= 100
+    body = _round(x, _decimals(clean), bool(re.search(r"[0#?],[0#?]", clean)))
+    return f"{prefix}{body}{'%' if '%' in clean else ''}{suffix}"
 
 
 def _raw(v: Value) -> str:
@@ -217,11 +246,14 @@ def table_from(path, *, sheet: str | None = None, rng: str | None = None, header
             for c in range(mc1, mc2 + 1):
                 if (r, c) != (mr1, mc1):
                     marks[(r - r1, c - c1)] = "<<" if r == mr1 else "^^"
-    col_dec, aligns = [], []
+    col_dec, aligns, groups, unknown = [], [], [], set()
     for c in range(nc):
         body = [cell(r, c) for r in range(header, nr) if (r, c) not in marks]
         nums = [v for v in body if v.kind == "number"]
-        col_dec.append(max((_plain_decimals(v.number) for v in nums if v.fmt == "General"), default=0))
+        general = [v.number for v in nums if v.fmt == "General"]
+        col_dec.append(max((_plain_decimals(x) for x in general), default=0))
+        # 연도 열(1900~2100 정수만)은 쉼표를 넣지 않는다 (2,026 방지)
+        groups.append(not (general and all(x == int(x) and 1900 <= x <= 2100 for x in general)))
         filled = [v for v in body if v.kind != "empty" and (v.kind == "number" or v.text)]
         numeric = bool(filled) and all((v.kind == "number" and v.fmt != "date") or
                                        (v.kind == "text" and _NUMERIC_LOOK.match(v.text)) for v in filled)
@@ -234,10 +266,12 @@ def table_from(path, *, sheet: str | None = None, rng: str | None = None, header
                 out.append(marks[(r, c)])
             else:
                 v = cell(r, c)
-                out.append(_cell_text(_raw(v) if r < header else _show(v, col_dec[c])))
+                out.append(_cell_text(_raw(v) if r < header else _show(v, col_dec[c], groups[c], unknown)))
         lines.append("| " + " | ".join(out) + " |")
         if r == max(header, 1) - 1:  # 보고서 마크다운은 첫 행을 머리로 본다
             lines.append("|" + "|".join(aligns) + "|")
+    for code in sorted(unknown):
+        warnings.append(f"엑셀 서식 '{code}'은(는) 그대로 보여 주지 못해 일반 숫자로 넣었어요. 표를 확인해 주세요.")
     if nc > MAX_COLS:
         warnings.append(f"열이 {nc}개라 한글 쪽 폭에 다 들어가지 않을 수 있어요. 필요한 열만 범위로 골라 보세요.")
     return "\n".join(lines) + "\n", warnings
