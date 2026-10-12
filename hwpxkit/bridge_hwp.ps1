@@ -79,30 +79,11 @@ try {
       Emit @{ ok = [bool]$r; pages = $pages; updated = [bool]$u }
     }
     "pagemap" {
-      # 본문 문단마다 쪽 번호. KeyIndicator는 출력 인자 8개(7번째 short)라 C# 리플렉션으로 부른다.
-      if (-not ("HwpKey" -as [type])) {
-        Add-Type -TypeDefinition @'
-public static class HwpKey {
-  public static int Page(object hwp) {
-    object[] a = new object[] { 0, 0, 0, 0, 0, 0, (short)0, "" };
-    var mod = new System.Reflection.ParameterModifier(8);
-    for (int i = 0; i < 8; i++) mod[i] = true;
-    hwp.GetType().InvokeMember("KeyIndicator", System.Reflection.BindingFlags.InvokeMethod, null, hwp, a,
-      new System.Reflection.ParameterModifier[] { mod }, null, null);
-    return System.Convert.ToInt32(a[2]);
-  }
-}
-'@
-      }
-      $list = New-Object System.Collections.Generic.List[int]
-      $i = 0
-      # SetPos는 끝을 넘어도 실패를 알리지 않아, 실제로 그 문단에 갔는지(GetPosBySet의 Para) 확인하며 센다
-      while ($i -lt 100000 -and $hwp.SetPos(0, $i, 0)) {
-        $at = $hwp.GetPosBySet()
-        if ([int]$at.Item("List") -ne 0 -or [int]$at.Item("Para") -ne $i) { break }
-        $list.Add([HwpKey]::Page($hwp)); $i++
-      }
-      Emit @{ ok = $true; pages = $pages; total = $pages; paras = $list.ToArray() }
+      # 실제 쪽마다 본문 글 (인쇄 쪽 번호는 새 쪽 번호로 다시 시작할 수 있어 쓰지 않는다). 엔진이 장 제목 줄을 찾는다.
+      ToTop $hwp
+      $texts = @()
+      for ($i = 0; $i -lt $pages; $i++) { $texts += [string]$hwp.GetPageText($i, 0) }
+      Emit @{ ok = $true; pages = $pages; total = $pages; texts = $texts }
     }
     default   { Emit @{ ok = $false; error = "unknown_action" } }
   }

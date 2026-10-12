@@ -353,8 +353,10 @@ def _cmd_pages(args, workdir) -> int:
     pkg = _open_any(src, workdir)
     if not bridge.available():
         raise PackageError("한글이 있어야 쪽수를 잴 수 있어요. 한글이 설치된 PC에서 다시 해 주세요.")
-    total, paras = bridge.page_map(src)
-    r = fit.measure(pkg, paras, total, level=args.level, limit=args.limit)
+    if args.level < 1:
+        raise ValueError("--level은 1 이상이어야 해요.")
+    total, texts = bridge.page_map(src)
+    r = fit.measure(pkg, texts, total, level=args.level, limit=args.limit)
     if args.json:
         print(json.dumps(r, ensure_ascii=False))
         return 0
@@ -369,6 +371,8 @@ def _cmd_pages(args, workdir) -> int:
     else:
         head += " (분량 제한을 찾지 못했어요. 제한이 몇 쪽인가요?)"
     print(head)
+    if lim and lim.get("exclude"):
+        print(f"[주의] 제외 조건이 있어요: '{lim['context'].strip()}'. 표지·차례·참고문헌처럼 빼는 쪽을 확인한 뒤 비교해 주세요.")
     for s in r["sections"]:
         indent = "  " * (s["level"] - 1)
         span = f"{s['start']}쪽" if s["start"] == s["end"] else f"{s['start']}~{s['end']}쪽"
@@ -392,7 +396,10 @@ def _cmd_guide(args, workdir) -> int:
             if it["kind"] != "배점":
                 print(f"  - [{it['kind']}] {it['text']}")
     if r["limits"]:
-        print("분량: " + ", ".join(x["text"] for x in r["limits"]))
+        print("분량: " + ", ".join(x["text"] + (f" (제외 조건: '{x['context'].strip()}')" if x["exclude"] else "")
+                                   for x in r["limits"]))
+    for w in r["warnings"]:
+        print(f"[주의] {w}")
     return 0
 
 
