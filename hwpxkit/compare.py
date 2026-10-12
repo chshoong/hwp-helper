@@ -52,44 +52,67 @@ def units(pkg: Package) -> list[Unit]:
     return out
 
 
-def diff(old: list[Unit], new: list[Unit]) -> list[dict]:
-    out = []
+def align(old: list[Unit], new: list[Unit]) -> tuple[dict[int, int], list[tuple[list[int], list[int], list[tuple[int, int]]]]]:
+    """새 판 단위 번호 → 옛 판 단위 번호 (같은 글과 짝지은 수정), 그리고 바뀐 묶음들 (옛 번호들, 새 번호들, 짝)."""
     sm = difflib.SequenceMatcher(None, [u.text for u in old], [u.text for u in new], autojunk=False)
+    new_to_old: dict[int, int] = {}
+    blocks = []
     for tag, a1, a2, b1, b2 in sm.get_opcodes():
         if tag == "equal":
+            for k in range(a2 - a1):
+                new_to_old[b1 + k] = a1 + k
             continue
-        olds, news = old[a1:a2], new[b1:b2]
-        pairs = []
+        olds, news, pairs = list(range(a1, a2)), list(range(b1, b2)), []
         if tag == "replace":  # 바뀐 묶음 안에서 가장 비슷한 문단끼리 짝 (앞에 새 문단이 끼어도 수정으로)
             used: set[int] = set()
             for o in olds:
                 best, score = None, 0.5
                 for n in news:
-                    if id(n) in used:
+                    if n in used:
                         continue
-                    r = difflib.SequenceMatcher(None, o.text, n.text).ratio()
+                    r = difflib.SequenceMatcher(None, old[o].text, new[n].text).ratio()
                     if r >= score:
                         best, score = n, r
                 if best is not None:
-                    used.add(id(best))
+                    used.add(best)
                     pairs.append((o, best))
-        paired_o = {id(o) for o, _ in pairs}
-        paired_n = {id(n) for _, n in pairs}
+                    new_to_old[best] = o
+        blocks.append((olds, news, pairs))
+    return new_to_old, blocks
+
+
+def diff(old: list[Unit], new: list[Unit]) -> list[dict]:
+    """add의 after_key = 바로 앞의 짝지어진 새 판 단위의 옛 key, before_key = 바로 뒤 것 (맨 앞 추가용).
+    del의 near_key = 그 자리에 가장 가까운 새 판 단위 key (뒤 → 앞)."""
+    new_to_old, blocks = align(old, new)
+    old_to_new = {o: n for n, o in new_to_old.items()}
+    out = []
+    for olds, news, pairs in blocks:
+        po, pn = {o for o, _ in pairs}, {n for _, n in pairs}
         for o, n in pairs:
-            out.append({"kind": "edit", "old": o.text, "new": n.text, "where": n.where,
-                        "old_key": o.key, "new_key": n.key})
+            out.append({"kind": "edit", "old": old[o].text, "new": new[n].text, "where": new[n].where,
+                        "old_key": old[o].key, "new_key": new[n].key})
         for o in olds:
-            if id(o) not in paired_o:
-                out.append({"kind": "del", "old": o.text, "where": o.where, "old_key": o.key})
-        after = old[a1 - 1].key if a1 > 0 else None
+            if o in po:
+                continue
+            near = next((old_to_new[j] for j in range(o + 1, len(old)) if j in old_to_new), None)
+            if near is None:
+                near = next((old_to_new[j] for j in range(o - 1, -1, -1) if j in old_to_new), None)
+            out.append({"kind": "del", "old": old[o].text, "where": old[o].where, "old_key": old[o].key,
+                        "near_key": new[near].key if near is not None else None})
         for n in news:
-            if id(n) not in paired_n:
-                out.append({"kind": "add", "new": n.text, "where": n.where, "new_key": n.key, "after_key": after})
+            if n in pn:
+                continue
+            prev = next((new_to_old[j] for j in range(n - 1, -1, -1) if j in new_to_old), None)
+            nxt = next((new_to_old[j] for j in range(n + 1, len(new)) if j in new_to_old), None)
+            out.append({"kind": "add", "new": new[n].text, "where": new[n].where, "new_key": new[n].key,
+                        "after_key": old[prev].key if prev is not None else None,
+                        "before_key": old[nxt].key if nxt is not None else None})
     return out
 
 
-def memos(pkg: Package) -> list[dict]:
-    """모든 구역의 한글 메모: 메모 글, 메모가 붙은 본문 글, 그 자리의 장."""
+def memos(pkg: Package, elements: bool = False) -> list[dict]:
+    """모든 구역의 한글 메모: 메모 글, 메모가 붙은 본문 글, 그 자리의 장. elements면 붙은 문단 요소("el")도."""
     where_of = {u.el: u.where for u in units(pkg)}  # 요소 자체가 열쇠
     out = []
     for sec in pkg.section_names():
@@ -110,6 +133,9 @@ def memos(pkg: Package) -> list[dict]:
                 if inside and ch.tag == q("hp:t"):
                     anchor += t_text(ch)
             p = next((a for a in bctrl.iterancestors() if a.tag == q("hp:p")), None)
-            out.append({"text": _memo_text(bctrl), "anchor": anchor.strip(),
-                        "where": where_of.get(p, "") if p is not None else ""})
+            m = {"text": _memo_text(bctrl), "anchor": anchor.strip(),
+                 "where": where_of.get(p, "") if p is not None else ""}
+            if elements:
+                m["el"] = p
+            out.append(m)
     return out

@@ -88,6 +88,8 @@ try {
     "memos" {
       # 메모 달기: Format = JSON 파일 [{anchor, n, text}]. 처음부터 anchor를 n번째까지 찾아 그 자리에 한글 메모.
       $list = Get-Content -Raw -Encoding UTF8 $Format | ConvertFrom-Json
+      # 문서 끝까지 찾으면 "처음부터 다시 찾을까요?"가 떠 멈춘다 → 예/아니오는 아니오, 확인은 확인으로 자동 응답
+      try { $null = $hwp.SetMessageBoxMode(0x22021) } catch {}
       $placed = 0; $missed = @(); $k = 0
       foreach ($m in @($list)) {
         $k++
@@ -99,7 +101,13 @@ try {
           try { $null = $set.HSet.SetItem($opt, $(if ($opt -eq "MatchCase") { 1 } else { 0 })) } catch {}
         }
         $found = $true
-        for ($j = 0; $j -lt [int]$m.n; $j++) { if (-not $hwp.HAction.Execute("RepeatFind", $set.HSet)) { $found = $false; break } }
+        $seen = @{}  # 찾기가 문서 끝에서 처음으로 돌아가면 같은 자리가 다시 나온다 → 못 찾은 것으로
+        for ($j = 0; $j -lt [int]$m.n; $j++) {
+          if (-not $hwp.HAction.Execute("RepeatFind", $set.HSet)) { $found = $false; break }
+          $ps = $hwp.GetPosBySet(); $at = "$($ps.Item('List'))/$($ps.Item('Para'))/$($ps.Item('Pos'))"
+          if ($seen.ContainsKey($at)) { $found = $false; break }
+          $seen[$at] = $true
+        }
         if (-not $found) { $missed += $k; continue }
         $before = [int]$hwp.GetPosBySet().Item("List")
         $opened = [bool]$hwp.HAction.Run("InsertFieldMemo")

@@ -317,15 +317,15 @@ def test_cli_merge_table_and_accept(blank, tmp_path, capsys, monkeypatch):
     monkeypatch.setattr(bridge, "available", lambda: False)
     src, a, b = opinion_files(blank, tmp_path)
     out = tmp_path / "모음본.hwpx"
-    assert main(["merge", str(src), str(a), str(b), str(out), "--json"]) == 0
+    assert main(["merge", str(src), str(a), str(b), "--out", str(out), "--json"]) == 0
     data = json.loads(capsys.readouterr().out)
     assert [o["id"] for o in data["opinions"]] == ["m1", "m2", "m3"] and not out.exists()
-    assert main(["merge", str(src), str(a), str(b), str(out), "--accept", "m2"]) == 0
+    assert main(["merge", str(src), str(a), str(b), "--out", str(out), "--accept", "m2"]) == 0
     text = capsys.readouterr().out
     assert "m2" in text and out.exists()
     from hwpxkit.body import own_text
     assert "홍이 고쳤다" in own_text(tops(Package.open(out))[3])
-    assert main(["merge", str(src), str(a), str(b), str(out), "--accept", "m2,m3"]) == 2
+    assert main(["merge", str(src), str(a), str(b), "--out", str(out), "--accept", "m2,m3"]) == 2
     assert "충돌" in capsys.readouterr().err
 
 
@@ -337,9 +337,9 @@ def test_cli_merge_notes_and_errors(blank, tmp_path, capsys, monkeypatch):
     notes = tmp_path / "notes.json"
     notes.write_text(json.dumps([{"who": "교수님", "where_text": "자료 수집 절차", "text": "근거"}], ensure_ascii=False),
                      encoding="utf-8")
-    assert main(["merge", str(src), str(tmp_path / "out.hwpx"), "--notes", str(notes), "--json"]) == 0
+    assert main(["merge", str(src), "--out", str(tmp_path / "out.hwpx"), "--notes", str(notes), "--json"]) == 0
     assert json.loads(capsys.readouterr().out)["opinions"][0]["kind"] == "note"
-    assert main(["merge", str(src), str(src)]) == 2
+    assert main(["merge", str(src), "--notes", str(notes), "--out", str(src)]) == 2
     assert "덮어쓸 수 없어요" in capsys.readouterr().err
 
 
@@ -350,9 +350,10 @@ def test_add_memos_with_hangul(blank, tmp_path):
     src = base_doc(blank, tmp_path)
     plan = [{"anchor": "해당 없음", "n": 2, "text": "[홍길동] 둘째 자리"},
             {"anchor": "120명", "n": 1, "text": "[김철수] 칸 메모"},
-            {"anchor": "없는 글", "n": 1, "text": "x"}]
+            {"anchor": "없는 글", "n": 1, "text": "x"},
+            {"anchor": "해당 없음", "n": 3, "text": "y"}]  # 두 번뿐: 처음으로 돌아가 찾으면 안 됨
     placed, missed = bridge.add_memos(src, tmp_path / "메모본.hwpx", plan)
-    assert placed == 2 and missed == [plan[2]]
+    assert placed == 2 and missed == [plan[2], plan[3]]
     ms = memos(Package.open(tmp_path / "메모본.hwpx"))
     texts = {m["text"]: m for m in ms}
     assert set(texts) == {"[홍길동] 둘째 자리", "[김철수] 칸 메모"}
@@ -377,3 +378,193 @@ def test_memo_plan_combines_same_spot(blank, tmp_path):
     assert len(plan) == 2
     both = next(p for p in plan if "김철수" in p["text"])
     assert "[홍길동 수정]" in both["text"] and "\n" in both["text"] and both["id"] == "m2,m3"
+
+
+# ---- 최종 리뷰 반영 ----
+
+def _ops(src, *others):
+    from hwpxkit.merge import opinions
+    base = Package.open(src)
+    return base, opinions(base, [(f"사람{k}", Package.open(o)) for k, o in enumerate(others, 1)])
+
+
+def test_memo_on_second_occurrence_lands_there(blank, tmp_path):
+    """C1: 둘째 '해당 없음'에 단 메모는 둘째 자리(n=2)로."""
+    from hwpxkit.merge import memo_plan
+    src = base_doc(blank, tmp_path)
+    other = edited(src, tmp_path / "보고서_가.hwpx", lambda pkg: add_memo(pkg, 8, "둘째 자리 메모"))
+    base, ops = _ops(src, other)
+    plan = memo_plan(base, ops)
+    assert [(p["anchor"], p["n"]) for p in plan] == [("해당 없음", 2)]
+
+
+def test_note_with_repeated_text_is_flagged(blank, tmp_path):
+    from hwpxkit.merge import opinions
+    src = base_doc(blank, tmp_path)
+    ops = opinions(Package.open(src), [], notes=[{"who": "교수님", "where_text": "해당 없음", "text": "?"}])
+    assert ops[0]["ambiguous"] is True
+
+
+def test_memo_without_anchor_text_uses_its_paragraph(blank, tmp_path):
+    """I12: 글 없이 점에 단 메모는 그 문단에."""
+    from hwpxkit.merge import memo_plan
+
+    def change(pkg):
+        p = [p for p in pkg.edit(SECTION) if p.tag == q("hp:p")][3]
+        run = memo_run("", "점 메모")
+        for el in list(run):
+            if el.tag == q("hp:t"):
+                run.remove(el)
+        p.append(run)
+    other = edited(src := base_doc(blank, tmp_path), tmp_path / "보고서_나.hwpx", change)
+    base, ops = _ops(src, other)
+    assert memo_plan(base, ops)[0]["anchor"].startswith("연구 목적을")
+
+
+def test_remaining_memos_pinned_after_accept(blank, tmp_path):
+    """C2: 반영 뒤 남은 의견 메모는 원래 문단에 (문단 번호가 바뀌어도)."""
+    from hwpxkit.merge import accept, memo_plan, pin_targets
+
+    def change(pkg):
+        set_text(pkg, 2, "연구 배경을 설명하는 첫 문단을 고쳤다. " + LONG)
+        root = pkg.edit(SECTION)
+        root.remove([p for p in root if p.tag == q("hp:p")][7])
+    other = edited(src := base_doc(blank, tmp_path), tmp_path / "보고서_다.hwpx", change)
+    base, ops = _ops(src, other)
+    dele = next(o for o in ops if o["kind"] == "del")
+    pins = pin_targets(base, ops)
+    accept(base, ops, [dele["id"]])
+    plan = memo_plan(base, [o for o in ops if o is not dele], pins)
+    assert plan[0]["anchor"].startswith("연구 배경을 설명하는 첫")
+
+
+def test_two_adds_after_edit_keep_place_and_order(blank, tmp_path):
+    """C3: 고친 문단 뒤에 넣은 두 문단은 그 문단 뒤에, 순서대로."""
+    from hwpxkit.compare import units
+    from hwpxkit.merge import accept
+
+    def change(pkg):
+        set_text(pkg, 2, "연구 배경을 설명하는 첫 문단을 고쳤다. " + LONG)
+        root = pkg.edit(SECTION)
+        ps = [p for p in root if p.tag == q("hp:p")]
+        ps[2].addnext(para("새 문단 둘."))
+        ps[2].addnext(para("새 문단 하나."))
+    other = edited(src := base_doc(blank, tmp_path), tmp_path / "보고서_라.hwpx", change)
+    base, ops = _ops(src, other)
+    accept(base, ops, [o["id"] for o in ops])
+    texts = [u.text[:9] for u in units(base) if u.key[0] == "p"]
+    assert texts[:5] == ["제1장 서론", "연구 배경을 설명", "새 문단 하나.", "새 문단 둘.", "연구 목적을 설명"]
+
+
+def test_add_after_table_stays_outside_table(blank, tmp_path):
+    from hwpxkit.merge import accept
+
+    def change(pkg):
+        root = pkg.edit(SECTION)
+        ps = [p for p in root if p.tag == q("hp:p")]
+        ps[4].addnext(para("표 다음 문단."))
+    other = edited(src := base_doc(blank, tmp_path), tmp_path / "보고서_마.hwpx", change)
+    base, ops = _ops(src, other)
+    accept(base, ops, [o["id"] for o in ops])
+    from hwpxkit.body import own_text
+    ps = tops(base)
+    assert own_text(ps[5]) == "표 다음 문단." and all("표 다음" not in own_text(c) for c in base.xml(SECTION).iter(q("hp:tc")))
+
+
+def test_title_paragraph_with_section_settings_safe(blank, tmp_path):
+    """C4: 쪽 설정(secPr)이 든 0번 문단의 삭제는 글만 비우고, 그 뒤 추가는 쪽 설정을 복제하지 않는다."""
+    from hwpxkit.merge import accept
+    src = edited(base_doc(blank, tmp_path), tmp_path / "표지.hwpx", lambda pkg: set_text(pkg, 0, "보고서 제목"))
+
+    def change(pkg):
+        set_text(pkg, 0, "")
+        [p for p in pkg.edit(SECTION) if p.tag == q("hp:p")][0].addnext(para("부제 한 줄"))
+    other = edited(src, tmp_path / "표지_바.hwpx", change)
+    base, ops = _ops(src, other)
+    accept(base, ops, [o["id"] for o in ops])
+    root = base.xml(SECTION)
+    assert sum(1 for _ in root.iter(q("hp:secPr"))) == 1
+    assert any(own == "부제 한 줄" for own in (" ".join(p.itertext()).strip() for p in tops(base)))
+
+
+def test_memo_plan_reverse_document_order(blank, tmp_path):
+    """I5: 메모는 문서 뒤쪽부터 단다 (앞 메모가 뒤 자리 찾기에 영향 주지 않게)."""
+    from hwpxkit.merge import memo_plan, opinions
+    src = base_doc(blank, tmp_path)
+    ops = opinions(Package.open(src), [], notes=[{"who": "가", "where_text": "연구 배경", "text": "1"},
+                                                  {"who": "나", "where_text": "자료 수집", "text": "2"}])
+    plan = memo_plan(Package.open(src), ops)
+    assert [p["anchor"] for p in plan] == ["자료 수집", "연구 배경"]
+
+
+def test_anchor_stops_at_tab(blank, tmp_path):
+    """I7: 탭이 든 문단은 탭 앞 글만 찾는다 (한글 찾기는 탭을 건너 이어 찾지 못함)."""
+    from hwpxkit.compare import units
+    from hwpxkit.merge import anchor_for
+    pkg = Package.open(blank)
+    p = para("가나")
+    t = p.find(q("hp:run")).find(q("hp:t"))
+    tab = t.makeelement(q("hp:tab"), {})
+    tab.tail = "다라마"
+    t.append(tab)
+    append_to_body(pkg, p)
+    us = units(pkg)
+    assert anchor_for(us, us[0].key) == ("가나", 1)
+
+
+def test_accept_refuses_changed_inputs(blank, tmp_path, monkeypatch, capsys):
+    """I8: 목록을 만든 뒤 입력 파일이 바뀌면 의견 번호가 어긋날 수 있어 반영하지 않는다."""
+    from hwpxkit import bridge
+    from hwpxkit.cli import main
+    monkeypatch.setattr(bridge, "available", lambda: False)
+    src, a, b = opinion_files(blank, tmp_path)
+    out = tmp_path / "모음본.hwpx"
+    assert main(["merge", str(src), str(a), str(b), "--out", str(out)]) == 0
+    capsys.readouterr()
+    edited(a, tmp_path / "고친.hwpx", lambda pkg: set_text(pkg, 7, "바뀐 의견")).replace(a)
+    assert main(["merge", str(src), str(a), str(b), "--out", str(out), "--accept", "m2"]) == 2
+    assert "바뀌" in capsys.readouterr().err
+
+
+def test_merge_requires_out(blank, tmp_path, capsys):
+    """I9: 결과는 --out으로만 (빠뜨리면 마지막 의견 파일을 덮어쓰지 않음)."""
+    from hwpxkit.cli import main
+    src, a, b = opinion_files(blank, tmp_path)
+    before = b.read_bytes()
+    with pytest.raises(SystemExit):
+        main(["merge", str(src), str(a), str(b)])
+    assert b.read_bytes() == before
+
+
+def test_change_plan_deletion_anchored_nearby(blank, tmp_path):
+    """I10: 비교 메모에서 삭제는 바로 뒤(없으면 앞) 문단에, 같은 자리는 한 메모로."""
+    from hwpxkit.compare import diff, units
+    from hwpxkit.merge import change_plan
+
+    def change(pkg):
+        root = pkg.edit(SECTION)
+        ps = [p for p in root if p.tag == q("hp:p")]
+        root.remove(ps[7])
+        root.remove(ps[6])
+    new = edited(src := base_doc(blank, tmp_path), tmp_path / "새판.hwpx", change)
+    new_pkg = Package.open(new)
+    plan = change_plan(new_pkg, diff(units(Package.open(src)), units(new_pkg)))
+    assert len(plan) == 1 and plan[0]["anchor"] == "해당 없음" and plan[0]["text"].count("[삭제됨]") == 2
+
+
+def test_place_memos_retry_joined_and_json_quiet(blank, tmp_path, monkeypatch, capsys):
+    """I11: 자리 못 찾은 메모들은 한 메모로 묶어 다시 달고, --json이면 화면 출력은 JSON뿐."""
+    from hwpxkit import bridge, cli
+    calls = []
+
+    def fake(src, dst, memos):
+        calls.append(memos)
+        open(dst, "wb").write(open(src, "rb").read())
+        return (0, list(memos)) if len(calls) == 1 else (1, [])
+    monkeypatch.setattr(bridge, "available", lambda: True)
+    monkeypatch.setattr(bridge, "add_memos", fake)
+    src, a, b = opinion_files(blank, tmp_path)
+    assert cli.main(["merge", str(src), str(a), str(b), "--out", str(tmp_path / "o.hwpx"), "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert len(calls[1]) == 1 and calls[1][0]["text"].count("[자리 못 찾음]") >= 2
+    assert data["placed"] == 1 and data["missed"] == []

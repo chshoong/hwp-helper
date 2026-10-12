@@ -403,21 +403,27 @@ def _cmd_guide(args, workdir) -> int:
     return 0
 
 
-def _place_memos(src: Path, out: Path, plan: list[dict], workdir: Path) -> None:
-    """메모를 단다. 자리를 못 찾은 메모는 첫 문단에 '[자리 못 찾음]'으로 한 번 더."""
+def _place_memos(src: Path, out: Path, plan: list[dict], workdir: Path, quiet: bool = False) -> tuple[int, list[str]]:
+    """메모를 단다. 자리를 못 찾은 메모들은 한 메모로 묶어 첫 문단에 '[자리 못 찾음]'으로 한 번 더."""
     placed, missed = bridge.add_memos(src, out, plan)
+    left: list[str] = []
     if missed:
         from .compare import units
+        from .merge import anchor_for
         us = units(_open_any(src, workdir))
-        first = us[0].raw[:40].strip() if us else ""
-        retry = [{"anchor": first, "n": 1, "text": "[자리 못 찾음] " + m["text"]} for m in missed]
+        first = anchor_for(us, us[0].key) if us else None
+        first = first or ("", 1)
+        text = "\n".join("[자리 못 찾음] " + m["text"] for m in missed)
         tmp = workdir / "memo2.hwpx"
-        n2, missed2 = bridge.add_memos(out, tmp, retry)
+        n2, missed2 = bridge.add_memos(out, tmp, [{"anchor": first[0], "n": first[1], "text": text}])
         shutil.copyfile(tmp, out)
         placed += n2
-        for m in missed2:
-            print(f"[주의] 메모를 달지 못했어요: {m['text'][:60]}")
-    print(f"한글 메모 {placed}개를 달았어요: {out}")
+        left = [m["text"] for m in missed] if missed2 else []
+    if not quiet:
+        for t in left:
+            print(f"[주의] 메모를 달지 못했어요: {t[:60]}")
+        print(f"한글 메모 {placed}개를 달았어요: {out}")
+    return placed, left
 
 
 def _cmd_compare(args, workdir) -> int:
@@ -447,65 +453,78 @@ def _cmd_compare(args, workdir) -> int:
         if not bridge.available():
             print("한글이 있어야 메모를 달 수 있어요. 바뀐 곳 목록만 보여 드렸어요.")
             return 0
-        from .merge import anchor_for
-        us = units(_open_any(new, workdir))
-        plan = []
-        for c in changes:
-            if c["kind"] == "del":
-                spot = None
-                text = f"[삭제됨] {c['old']}"
-            else:
-                spot = anchor_for(us, c["new_key"])
-                text = "[추가됨]" if c["kind"] == "add" else f"[바뀜] 원래: {c['old']}"
-            if spot is None:
-                spot = (us[0].raw[:40].strip(), 1) if us else ("", 1)
-            plan.append({"anchor": spot[0], "n": spot[1], "text": text})
+        from .merge import change_plan
+        plan = change_plan(_open_any(new, workdir), changes)
         _place_memos(new, out, plan, workdir)
     return 0
+
+
+def _fingerprint(paths: list[Path], notes: bytes) -> str:
+    import hashlib
+    h = hashlib.sha256()
+    for path in paths:
+        h.update(hashlib.sha256(path.read_bytes()).digest())
+    h.update(hashlib.sha256(notes).digest())
+    return h.hexdigest()
 
 
 def _cmd_merge(args, workdir) -> int:
     from . import merge as merge_mod
     paths = [Path(p) for p in args.files]
-    if len(paths) < 2:
-        raise PackageError("원본과 결과 파일을 주세요: merge <원본> <의견…> <모음본.hwpx>")
-    base, others, out = paths[0], paths[1:-1], paths[-1]
-    if out.resolve() in [p.resolve() for p in paths[:-1]]:
+    base, others, out = paths[0], paths[1:], Path(args.out)
+    if out.resolve() in [p.resolve() for p in paths]:
         raise PackageError("원본 파일을 덮어쓸 수 없어요. 다른 이름으로 저장해 주세요.")
-    notes = json.loads(Path(args.notes).read_text(encoding="utf-8")) if args.notes else []
+    notes_bytes = Path(args.notes).read_bytes() if args.notes else b""
+    notes = json.loads(notes_bytes.decode("utf-8-sig")) if args.notes else []
     if not others and not notes:
         raise PackageError("의견 파일을 하나 이상 주세요 (또는 --notes).")
     taken: set[str] = set()
     named = [(merge_mod.opinion_name(base, p, taken), _open_any(p, workdir)) for p in others]
     base_pkg = _open_any(base, workdir)
     ops = merge_mod.opinions(base_pkg, named, notes)
+    side = out.with_name(out.stem + ".의견.json")  # 목록을 만든 때의 입력 지문: 반영 때 번호가 어긋나지 않게
+    finger = _fingerprint(paths, notes_bytes)
     applied, skipped = [], []
     if args.accept:
+        if side.exists():
+            seen = json.loads(side.read_text(encoding="utf-8")).get("fingerprint")
+            if seen != finger:
+                raise PackageError("의견 목록을 만든 뒤 원본이나 의견 파일이 바뀌어 의견 번호가 어긋날 수 있어요. "
+                                   "--accept 없이 다시 실행해 목록을 확인한 뒤 번호를 골라 주세요.")
         ids = [x.strip() for x in args.accept.split(",") if x.strip()]
+        pins = merge_mod.pin_targets(base_pkg, ops)
         applied, skipped = merge_mod.accept(base_pkg, ops, ids)
-    rest = [o for o in ops if o["id"] not in applied]
-    if args.json:
-        print(json.dumps({"opinions": ops, "applied": applied, "skipped": skipped}, ensure_ascii=False, default=list))
     else:
+        side.write_text(json.dumps({"fingerprint": finger, "opinions": ops}, ensure_ascii=False, default=list),
+                        encoding="utf-8")
+        pins = None
+    rest = [o for o in ops if o["id"] not in applied]
+    result = {"opinions": ops, "applied": applied, "skipped": skipped, "placed": 0, "missed": []}
+    if not args.json:
         for o in ops:
             mark = " (반영함)" if o["id"] in applied else ""
             print(f"{o['id']} {merge_mod.memo_text(o)}  — {o['where']}{mark}")
         for s in skipped:
             print(f"[주의] {s}")
     if not args.accept and not bridge.available():
-        if not args.json:
+        if args.json:
+            print(json.dumps(result, ensure_ascii=False, default=list))
+        else:
             print("한글이 있어야 의견 모음본(메모)을 만들 수 있어요. 의견 목록만 보여 드렸어요.")
         return 0
     staged = workdir / "merged.hwpx"
     base_pkg.save(staged)
     if bridge.available() and rest:
-        _place_memos(staged, out, merge_mod.memo_plan(base_pkg, rest), workdir)
+        plan = merge_mod.memo_plan(base_pkg, rest, pins)
+        result["placed"], result["missed"] = _place_memos(staged, out, plan, workdir, quiet=args.json)
     else:
         shutil.copyfile(staged, out)
         if rest and not args.json:
             print("[주의] 한글이 없어 남은 의견을 메모로 달지 못했어요.")
         if not args.json:
             print(f"저장했어요: {out}")
+    if args.json:
+        print(json.dumps(result, ensure_ascii=False, default=list))
     return 0
 
 
@@ -836,7 +855,8 @@ def _parser() -> argparse.ArgumentParser:
     s.add_argument("--json", action="store_true")
     s.set_defaults(func=_cmd_compare)
     s = sub.add_parser("merge", help="여러 사람 의견(메모·수정)을 원본 사본 하나에 메모로 모으기")
-    s.add_argument("files", nargs="+", help="<원본> <의견 파일…> <모음본.hwpx>")
+    s.add_argument("files", nargs="+", help="<원본> <의견 파일…>")
+    s.add_argument("--out", required=True, help="의견 모음본(새 파일)")
     s.add_argument("--accept", help="본문에 반영할 의견 번호 (예: m2,m5)")
     s.add_argument("--notes", help="따로 받은 의견 JSON [{who, where_text, text}]")
     s.add_argument("--json", action="store_true")
