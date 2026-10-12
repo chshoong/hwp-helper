@@ -277,3 +277,67 @@ def test_accept_memo_ignored(blank, tmp_path):
     ops = opinions(base, [("홍길동", Package.open(a))])
     applied, skipped = accept(base, ops, ["m1"])
     assert applied == [] and "메모" in skipped[0]
+
+
+def test_add_memos_uses_bridge(tmp_path, monkeypatch):
+    from hwpxkit import bridge
+    seen = {}
+
+    def fake_run(action, work, *, src=None, dst=None, fmt=None, timeout=0):
+        seen["action"], seen["memos"] = action, json.loads(open(fmt, encoding="utf-8").read())
+        open(dst, "wb").write(b"x")
+        return {"ok": True, "placed": 1, "missed": [2]}  # 1부터 센 번호
+    monkeypatch.setattr(bridge, "_require", lambda: None)
+    monkeypatch.setattr(bridge, "_run", fake_run)
+    src = tmp_path / "a.hwpx"
+    src.write_bytes(b"y")
+    memos = [{"anchor": "가", "n": 1, "text": "m"}, {"anchor": "나", "n": 2, "text": "n"}]
+    placed, missed = bridge.add_memos(src, tmp_path / "b.hwpx", memos)
+    assert seen["action"] == "memos" and seen["memos"] == memos and placed == 1 and missed == [memos[1]]
+    assert (tmp_path / "b.hwpx").read_bytes() == b"x"
+
+
+def test_cli_compare(blank, tmp_path, capsys, monkeypatch):
+    from hwpxkit import bridge
+    from hwpxkit.cli import main
+    monkeypatch.setattr(bridge, "available", lambda: False)
+    src, a, b = opinion_files(blank, tmp_path)
+    assert main(["compare", str(src), str(a)]) == 0
+    out = capsys.readouterr().out
+    assert "제1장 서론" in out and "~ 수정" in out and "홍이 고쳤다" in out
+    assert main(["compare", str(src), str(src)]) == 0
+    assert "바뀐 곳이 없어요" in capsys.readouterr().out
+    assert main(["compare", str(src), str(a), "--memo", str(tmp_path / "표시.hwpx")]) == 0
+    assert "한글이 있어야" in capsys.readouterr().out and not (tmp_path / "표시.hwpx").exists()
+
+
+def test_cli_merge_table_and_accept(blank, tmp_path, capsys, monkeypatch):
+    from hwpxkit import bridge
+    from hwpxkit.cli import main
+    monkeypatch.setattr(bridge, "available", lambda: False)
+    src, a, b = opinion_files(blank, tmp_path)
+    out = tmp_path / "모음본.hwpx"
+    assert main(["merge", str(src), str(a), str(b), str(out), "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert [o["id"] for o in data["opinions"]] == ["m1", "m2", "m3"] and not out.exists()
+    assert main(["merge", str(src), str(a), str(b), str(out), "--accept", "m2"]) == 0
+    text = capsys.readouterr().out
+    assert "m2" in text and out.exists()
+    from hwpxkit.body import own_text
+    assert "홍이 고쳤다" in own_text(tops(Package.open(out))[3])
+    assert main(["merge", str(src), str(a), str(b), str(out), "--accept", "m2,m3"]) == 2
+    assert "충돌" in capsys.readouterr().err
+
+
+def test_cli_merge_notes_and_errors(blank, tmp_path, capsys, monkeypatch):
+    from hwpxkit import bridge
+    from hwpxkit.cli import main
+    monkeypatch.setattr(bridge, "available", lambda: False)
+    src = base_doc(blank, tmp_path)
+    notes = tmp_path / "notes.json"
+    notes.write_text(json.dumps([{"who": "교수님", "where_text": "자료 수집 절차", "text": "근거"}], ensure_ascii=False),
+                     encoding="utf-8")
+    assert main(["merge", str(src), str(tmp_path / "out.hwpx"), "--notes", str(notes), "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["opinions"][0]["kind"] == "note"
+    assert main(["merge", str(src), str(src)]) == 2
+    assert "덮어쓸 수 없어요" in capsys.readouterr().err

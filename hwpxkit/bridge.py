@@ -222,6 +222,27 @@ def page_map(path) -> tuple[int, list[str]]:
     return int(result.get("total", 0)), [str(x) for x in texts]
 
 
+def add_memos(src, dst, memos: list[dict]) -> tuple[int, list[dict]]:
+    """숨은 한글로 src를 열어 메모들({anchor, n, text})을 달고 dst(.hwpx)로 저장. (단 수, 못 단 메모)."""
+    dst = Path(dst)
+    if Path(src).resolve() == dst.resolve():
+        raise ValueError("원본 파일을 덮어쓸 수 없어요. 다른 이름으로 저장해 주세요.")
+    _require()
+    with _workdir() as work:
+        spec = work / "memos.json"
+        spec.write_text(json.dumps(memos, ensure_ascii=False), encoding="utf-8")
+        out = work / "out.hwpx"
+        result = _run("memos", work, src=_stage(src, work), dst=out, fmt=str(spec))
+        if not out.exists():
+            raise BridgeError("메모를 단 파일이 만들어지지 않았어요.")
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(out, dst)
+    missed = result.get("missed") or []
+    if isinstance(missed, int):
+        missed = [missed]
+    return int(result.get("placed", 0)), [memos[int(k) - 1] for k in missed]
+
+
 def page_images(path, out_dir) -> list[Path]:
     """쪽마다 PNG(96dpi)를 out_dir/page001.png … 로 만든다."""
     from PIL import Image

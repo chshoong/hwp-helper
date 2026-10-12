@@ -85,6 +85,36 @@ try {
       for ($i = 0; $i -lt $pages; $i++) { $texts += [string]$hwp.GetPageText($i, 0) }
       Emit @{ ok = $true; pages = $pages; total = $pages; texts = $texts }
     }
+    "memos" {
+      # 메모 달기: Format = JSON 파일 [{anchor, n, text}]. 처음부터 anchor를 n번째까지 찾아 그 자리에 한글 메모.
+      $list = Get-Content -Raw -Encoding UTF8 $Format | ConvertFrom-Json
+      $placed = 0; $missed = @(); $k = 0
+      foreach ($m in @($list)) {
+        $k++
+        ToTop $hwp
+        $set = $hwp.HParameterSet.HFindReplace
+        $null = $hwp.HAction.GetDefault("RepeatFind", $set.HSet)
+        $set.FindString = [string]$m.anchor; $set.Direction = 0; $set.IgnoreMessage = 1
+        foreach ($opt in @("MatchCase", "WholeWordOnly", "FindRegExp", "FindJaso", "AllWordForms", "SeveralWords", "UseWildCards")) {
+          try { $null = $set.HSet.SetItem($opt, $(if ($opt -eq "MatchCase") { 1 } else { 0 })) } catch {}
+        }
+        $found = $true
+        for ($j = 0; $j -lt [int]$m.n; $j++) { if (-not $hwp.HAction.Execute("RepeatFind", $set.HSet)) { $found = $false; break } }
+        if (-not $found) { $missed += $k; continue }
+        $before = [int]$hwp.GetPosBySet().Item("List")
+        $opened = [bool]$hwp.HAction.Run("InsertFieldMemo")
+        if ($opened -and [int]$hwp.GetPosBySet().Item("List") -ne $before) {
+          $ins = $hwp.HParameterSet.HInsertText
+          $null = $hwp.HAction.GetDefault("InsertText", $ins.HSet); $ins.Text = [string]$m.text
+          $null = $hwp.HAction.Execute("InsertText", $ins.HSet)
+          $null = $hwp.HAction.Run("CloseEx")
+          $placed++
+        } else { $null = $hwp.HAction.Run("Cancel"); $missed += $k }
+      }
+      ToTop $hwp
+      $r = $hwp.SaveAs($Dst, "HWPX", "")
+      Emit @{ ok = [bool]$r; pages = $pages; placed = $placed; missed = $missed }
+    }
     default   { Emit @{ ok = $false; error = "unknown_action" } }
   }
 }
