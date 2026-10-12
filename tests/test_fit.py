@@ -67,3 +67,43 @@ def test_measure_mismatch_warns(blank):
     pkg = _doc(blank, ["제1장 서론", LONG, "제2장 방법", LONG])
     r = measure(pkg, [1, 1, 1], 2)  # 한글이 문단 하나를 덜 셈
     assert r["warnings"] and r["sections"][0]["start"] == 1
+
+
+def guide_form(blank):
+    pkg = Package.open(blank)
+    append_to_body(pkg, para("※ 본문 분량은 10쪽 이내로 작성"))
+    append_to_body(pkg, para("제1장 서론〔10점〕"))
+    append_to_body(pkg, table(1, 1, texts={(0, 0): ["작성 요령", "", "- 연구 배경을 구체적으로 기술", "- 필요성을 제시"]}))
+    append_to_body(pkg, para("※ 표·그림을 활용하여 작성"))
+    append_to_body(pkg, para("※ 참고: 이 줄은 안내가 아님"))
+    append_to_body(pkg, para("제2장 방법〔30점〕"))
+    append_to_body(pkg, table(2, 1, texts={(0, 0): "작성 방법", (1, 0): "자료 수집 절차와 기준 기술"}))
+    append_to_body(pkg, table(2, 2, texts={(0, 0): "구분", (0, 1): "내용", (1, 0): "가", (1, 1): "나"}))
+    append_to_body(pkg, para("제3장 결론"))
+    append_to_body(pkg, para(LONG))
+    return pkg
+
+
+def test_guide_items(blank):
+    from hwpxkit.fit import guide_items
+    r = guide_items(guide_form(blank))
+    assert [l["text"] for l in r["limits"]] == ["10쪽 이내"]
+    secs = {s["title"]: s for s in r["sections"]}
+    assert list(secs) == ["(앞부분)", "제1장 서론〔10점〕", "제2장 방법〔30점〕"]
+    assert secs["(앞부분)"]["items"] == [{"kind": "안내", "text": "※ 본문 분량은 10쪽 이내로 작성"}]
+    assert secs["제1장 서론〔10점〕"]["items"] == [
+        {"kind": "배점", "text": "10점"},
+        {"kind": "요령", "text": "- 연구 배경을 구체적으로 기술"},
+        {"kind": "요령", "text": "- 필요성을 제시"},
+        {"kind": "안내", "text": "※ 표·그림을 활용하여 작성"}]
+    assert secs["제2장 방법〔30점〕"]["items"] == [{"kind": "배점", "text": "30점"},
+                                              {"kind": "요령", "text": "자료 수집 절차와 기준 기술"}]
+    assert secs["제2장 방법〔30점〕"]["score"] == 30
+
+
+def test_guide_none(blank):
+    from hwpxkit.fit import guide_items
+    pkg = Package.open(blank)
+    append_to_body(pkg, para("제1장 서론"))
+    append_to_body(pkg, para(LONG))
+    assert guide_items(pkg)["sections"] == []

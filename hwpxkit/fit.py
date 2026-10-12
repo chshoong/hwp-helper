@@ -79,3 +79,52 @@ def measure(pkg: Package, pages: list[int], total: int, *, level: int = 2, limit
         chosen = limits[0] if len(limits) == 1 else None
     return {"pages": total, "limit": chosen, "limits": limits,
             "sections": sections_from_pages(headings(pkg, level), pages, total), "warnings": warnings}
+_BOX_HEAD = re.compile(r"작성\s*(요령|방법|안내)|유의\s*사항|기재\s*요령")
+_NOTE_WORDS = re.compile(r"작성|기술|기재|포함|제시|첨부|명시")
+
+
+def _box_lines(tbl) -> list[str] | None:
+    """작성 요령 상자(1칸 표, 또는 첫 칸이 '작성 요령' 같은 머리인 표)의 항목 줄. 상자가 아니면 None."""
+    tcs = list(tbl.iter(q("hp:tc")))
+    first = " ".join(own_text(p) for p in tcs[0].iter(q("hp:p"))).strip() if tcs else ""
+    if not (len(tcs) == 1 or _BOX_HEAD.search(first)):
+        return None
+    out = []
+    for p in tbl.iter(q("hp:p")):
+        text = " ".join(own_text(p).split())
+        if not text or (_BOX_HEAD.search(text) and len(text) <= 12):  # 빈 줄, 머리 줄('작성 요령')
+            continue
+        out.append(text)
+    return out
+
+
+def guide_items(pkg: Package) -> dict:
+    """양식의 작성 요령·안내·배점을 장(h1~h2)별로."""
+    from .review import _GUIDE_RE
+    tops = _tops(pkg)
+    head_at = {i: (title, lvl) for i, title, lvl in headings(pkg, 2)}
+    sections = [{"title": "(앞부분)", "score": None, "items": []}]
+    seen: set[str] = set()
+
+    def add(kind: str, text: str) -> None:
+        if text not in seen:
+            seen.add(text)
+            sections[-1]["items"].append({"kind": kind, "text": text})
+
+    for i, p in enumerate(tops):
+        if i in head_at:
+            title = head_at[i][0]
+            score = heading_score(title)
+            sections.append({"title": title, "score": score, "items": []})
+            if score is not None:
+                sections[-1]["items"].append({"kind": "배점", "text": f"{score}점"})
+            continue
+        tbl = next((t for run in p.findall(q("hp:run")) for t in run.findall(q("hp:tbl"))), None)
+        if tbl is not None:
+            for line in _box_lines(tbl) or []:
+                add("요령", line)
+            continue
+        text = " ".join(own_text(p).split())
+        if text and (_GUIDE_RE.search(text) or (text.startswith("※") and _NOTE_WORDS.search(text))):
+            add("안내", text)
+    return {"limits": find_limits(doc_texts(pkg)), "sections": [s for s in sections if s["items"]]}
