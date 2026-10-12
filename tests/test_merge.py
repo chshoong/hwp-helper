@@ -194,3 +194,86 @@ def test_memo_plan_falls_back(blank, tmp_path):
     ops = opinions(Package.open(src), [], notes=[{"who": "교수님", "where_text": "없는 글", "text": "의견"}])
     plan = memo_plan(Package.open(src), ops)
     assert plan[0]["anchor"] == "제1장 서론" and plan[0]["text"].startswith("[자리 못 찾음] [교수님]")
+
+
+def test_accept_edit_keeps_format(blank, tmp_path):
+    from hwpxkit.merge import accept, opinions
+    src, a, b = opinion_files(blank, tmp_path)
+    base = Package.open(src)
+    before = tops(base)[3].get("paraPrIDRef"), tops(base)[3].find(q("hp:run")).get("charPrIDRef")
+    ops = opinions(base, [("홍길동", Package.open(a))])
+    applied, skipped = accept(base, ops, ["m2"])
+    from hwpxkit.body import own_text
+    p = tops(base)[3]
+    assert applied == ["m2"] and skipped == []
+    assert "홍이 고쳤다" in own_text(p) and (p.get("paraPrIDRef"), p.find(q("hp:run")).get("charPrIDRef")) == before
+
+
+def test_accept_cell_edit_add_del(blank, tmp_path):
+    from hwpxkit.body import own_text
+    from hwpxkit.compare import units
+    from hwpxkit.merge import accept, opinions
+    src = base_doc(blank, tmp_path)
+
+    def change(pkg):
+        from hwpxkit.editor.doc import _set_text
+        root = pkg.edit(SECTION)
+        cell = [tc for tc in root.iter(q("hp:tc"))][3]
+        _set_text(cell.find(q("hp:subList")).find(q("hp:p")), "150명")
+        ps = [p for p in root if p.tag == q("hp:p")]
+        root.remove(ps[7])
+        root.insert(root.index(ps[3]) + 1, para("셋째로 넣은 문단."))
+    other = edited(src, tmp_path / "보고서_이.hwpx", change)
+    base = Package.open(src)
+    ops = opinions(base, [("이", Package.open(other))])
+    applied, skipped = accept(base, ops, [o["id"] for o in ops])
+    texts = [u.text for u in units(base)]
+    assert "150명" in texts and "셋째로 넣은 문단." in texts and not any(t.startswith("자료 수집") for t in texts)
+    assert texts.index("셋째로 넣은 문단.") == texts.index(next(t for t in texts if t.startswith("연구 목적"))) + 1
+
+
+def test_accept_skips_changed_original(blank, tmp_path):
+    from hwpxkit.merge import accept, opinions
+    src, a, b = opinion_files(blank, tmp_path)
+    base = Package.open(src)
+    ops = opinions(base, [("홍길동", Package.open(a))])
+    set_text(base, 3, "그 사이 원본이 바뀜")
+    applied, skipped = accept(base, ops, ["m2"])
+    assert applied == [] and "m2" in skipped[0]
+
+
+def test_accept_both_conflicting_refused(blank, tmp_path):
+    from hwpxkit.merge import MergeError, accept, opinions
+    src, a, b = opinion_files(blank, tmp_path)
+    base = Package.open(src)
+    ops = opinions(base, [("홍길동", Package.open(a)), ("김철수", Package.open(b))])
+    with pytest.raises(MergeError, match="충돌"):
+        accept(base, ops, ["m2", "m3"])
+    with pytest.raises(MergeError, match="m9"):
+        accept(base, ops, ["m9"])
+
+
+def test_delete_last_cell_paragraph_blanks(blank, tmp_path):
+    from hwpxkit.merge import accept, opinions
+    src = base_doc(blank, tmp_path)
+
+    def change(pkg):
+        from hwpxkit.editor.doc import _set_text
+        cell = [tc for tc in pkg.edit(SECTION).iter(q("hp:tc"))][3]
+        _set_text(cell.find(q("hp:subList")).find(q("hp:p")), "")
+    other = edited(src, tmp_path / "보고서_최.hwpx", change)
+    base = Package.open(src)
+    ops = opinions(base, [("최", Package.open(other))])
+    assert [o["kind"] for o in ops] == ["del"]
+    accept(base, ops, ["m1"])
+    cell = [tc for tc in base.xml(SECTION).iter(q("hp:tc"))][3]
+    assert len(cell.find(q("hp:subList")).findall(q("hp:p"))) == 1
+
+
+def test_accept_memo_ignored(blank, tmp_path):
+    from hwpxkit.merge import accept, opinions
+    src, a, b = opinion_files(blank, tmp_path)
+    base = Package.open(src)
+    ops = opinions(base, [("홍길동", Package.open(a))])
+    applied, skipped = accept(base, ops, ["m1"])
+    assert applied == [] and "메모" in skipped[0]

@@ -104,3 +104,47 @@ def memo_plan(base_pkg: Package, ops: list[dict]) -> list[dict]:
             text = "[자리 못 찾음] " + text
         plan.append({"id": op["id"], "anchor": spot[0], "n": spot[1], "text": text})
     return plan
+
+
+def accept(base_pkg: Package, ops: list[dict], ids: list[str]) -> tuple[list[str], list[str]]:
+    """고른 의견만 원본 사본에 반영한다. 문단 모양·첫 글자 모양은 유지."""
+    from .editor.doc import _set_text
+    from .ns import q
+    by_id = {o["id"]: o for o in ops}
+    missing = [i for i in ids if i not in by_id]
+    if missing:
+        raise MergeError(f"없는 의견 번호예요: {', '.join(missing)} (있는 번호: {', '.join(by_id)})")
+    chosen = [by_id[i] for i in ids]
+    for o in chosen:
+        both = [c for c in o["conflict"] if c in ids]
+        if both:
+            raise MergeError(f"{o['id']}와 {', '.join(both)}는 같은 곳을 다르게 고친 충돌 의견이에요. 하나만 골라 주세요.")
+    pkg_root = base_pkg.edit(base_pkg.section_names()[0])
+    us = {u.key: u for u in units(base_pkg)}
+    applied, skipped = [], []
+    for o in chosen:
+        if o["kind"] in ("memo", "note"):
+            skipped.append(f"{o['id']}: 메모 의견은 본문에 반영할 글이 없어요.")
+            continue
+        u = us.get(o["key"]) if o.get("key") is not None else None
+        if o["kind"] in ("edit", "del") and (u is None or u.text != o["old"]):
+            skipped.append(f"{o['id']}: 의견을 만든 뒤 원본 그 부분이 바뀌어 반영하지 않았어요.")
+            continue
+        if o["kind"] == "edit":
+            _set_text(u.el, o["new"])
+        elif o["kind"] == "del":
+            parent = u.el.getparent()
+            siblings = [x for x in parent if x.tag == q("hp:p")]
+            if parent.tag == q("hp:subList") and len(siblings) == 1:
+                _set_text(u.el, "")
+            else:
+                parent.remove(u.el)
+        else:  # add: 앞 단위 문단을 복제해 그 뒤에
+            if u is None or u.el.getparent() is None:  # 앞 단위가 같은 반영에서 지워졌으면
+                skipped.append(f"{o['id']}: 넣을 자리를 찾지 못해 반영하지 않았어요.")
+                continue
+            clone = copy.deepcopy(u.el)
+            _set_text(clone, o["new"])
+            u.el.addnext(clone)
+        applied.append(o["id"])
+    return applied, skipped
