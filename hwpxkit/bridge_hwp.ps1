@@ -96,7 +96,12 @@ public static class HwpKey {
       }
       $list = New-Object System.Collections.Generic.List[int]
       $i = 0
-      while ($i -lt 100000 -and $hwp.SetPos(0, $i, 0)) { $list.Add([HwpKey]::Page($hwp)); $i++ }
+      # SetPos는 끝을 넘어도 실패를 알리지 않아, 실제로 그 문단에 갔는지(GetPosBySet의 Para) 확인하며 센다
+      while ($i -lt 100000 -and $hwp.SetPos(0, $i, 0)) {
+        $at = $hwp.GetPosBySet()
+        if ([int]$at.Item("List") -ne 0 -or [int]$at.Item("Para") -ne $i) { break }
+        $list.Add([HwpKey]::Page($hwp)); $i++
+      }
       Emit @{ ok = $true; pages = $pages; total = $pages; paras = $list.ToArray() }
     }
     default   { Emit @{ ok = $false; error = "unknown_action" } }

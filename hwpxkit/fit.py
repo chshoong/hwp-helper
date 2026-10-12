@@ -54,7 +54,8 @@ def sections_from_pages(heads, pages: list[int], total: int) -> list[dict]:
             break
         start = pages[i]
         nxt = next((j for j, _, l2 in heads[k + 1:] if l2 <= lvl and j < len(pages)), None)
-        end = max(start, pages[nxt] - 1) if nxt is not None else max(start, total)
+        # 끝 = 다음 같은·높은 제목 바로 앞 문단의 쪽 (다음 장이 쪽 중간에서 시작하면 그 쪽도 이 장)
+        end = max(start, pages[nxt - 1]) if nxt is not None else max(start, total)
         out.append({"title": title, "level": lvl, "score": heading_score(title), "para": i,
                     "start": start, "end": end, "count": end - start + 1})
     return out

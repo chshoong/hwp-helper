@@ -158,3 +158,35 @@ def test_cli_guide(blank, tmp_path, capsys):
     empty = _doc(blank, ["제1장 서론", LONG]).save(tmp_path / "b.hwpx")
     assert main(["guide", str(empty)]) == 0
     assert "찾지 못했어요" in capsys.readouterr().out
+
+
+@pytest.mark.hangul
+def test_page_map_with_hangul(blank, tmp_path):
+    from hwpxkit import bridge
+    from hwpxkit.fit import measure
+    from hwpxkit.render import render_into
+    from hwpxkit.samples import infer
+    pkg = Package.open(blank)
+    append_to_body(pkg, para(LONG))
+    md = "# 제1장 서론\n\n" + LONG + "\n\n---쪽---\n\n# 제2장 방법\n\n" + LONG + "\n\n---쪽---\n\n# 제3장 결론\n\n" + LONG + "\n"
+    render_into(pkg, infer(pkg), md)
+    src = pkg.save(tmp_path / "세쪽.hwpx")
+    total, paras = bridge.page_map(src)
+    r = measure(Package.open(src), paras, total)
+    assert total == 3 and [s["start"] for s in r["sections"]] == [1, 2, 3] and not r["warnings"]
+
+
+def test_skill_documents_fit():
+    from pathlib import Path
+    root = Path(__file__).parents[1] / "skills" / "hwp-helper"
+    text = (root / "reference" / "fit.md").read_text(encoding="utf-8")
+    for word in ('hwpx.py" pages', 'hwpx.py" guide', "--limit", "render", "--replace", "지어내지", "3번"):
+        assert word in text, word
+    assert "reference/fit.md" in (root / "SKILL.md").read_text(encoding="utf-8")
+
+
+def test_section_ends_where_next_heading_starts_mid_page():
+    """앞 장은 다음 제목 바로 앞 문단의 쪽까지 (다음 장이 쪽 중간에서 시작하면 그 쪽을 함께 씀)."""
+    from hwpxkit.fit import sections_from_pages
+    out = sections_from_pages([(0, "가", 1), (3, "나", 1)], [1, 1, 2, 2, 3], 3)
+    assert [(s["start"], s["end"]) for s in out] == [(1, 2), (2, 3)]
