@@ -35,7 +35,7 @@ def test_table_with_caption_and_attrs():
     md = "표: 활용 사례 {#tbl:cases widths=1,2,2}\n| 기관 | 대상 | 단계 |\n|---|:--:|---|\n| A | B |\n| ^^ | << | C |\n"
     (t,) = parse(md)
     assert t == Table([["기관", "대상", "단계"], ["A", "B", ""], ["^^", "<<", "C"]],
-                      caption="활용 사례", label="tbl:cases", widths=[1.0, 2.0, 2.0])
+                      caption="활용 사례", label="tbl:cases", widths=[1.0, 2.0, 2.0], aligns=["", "center", ""])
 
 
 def test_table_without_caption():

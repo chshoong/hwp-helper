@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import shutil
 import sys
 import tempfile
@@ -298,6 +299,52 @@ def _cmd_toc(args, workdir) -> int:
         else:
             print(f"[상호 참조] 본문의 표·그림 번호 {n}곳을 한글 상호 참조로 연결했어요.")
     return _save_checked(pkg, out, workdir, args.preview)
+
+
+def _cmd_table_from(args, workdir) -> int:
+    from .sheet import table_from
+    src = Path(args.file)
+    if not src.is_file():
+        raise PackageError(f"파일을 찾을 수 없어요: {src}")
+    md, warnings = table_from(src, sheet=args.sheet, rng=args.range, header=args.header, caption=args.caption)
+    for w in warnings:
+        print(f"[주의] {w}", file=sys.stderr)
+    if args.out:
+        Path(args.out).write_text(md, encoding="utf-8")
+        print(f"저장했어요: {args.out}")
+    else:
+        print(md, end="")
+    return 0
+
+
+def _cmd_carry(args, workdir) -> int:
+    from . import carry as carry_mod
+    src, out = _resolve_template(args.file), Path(args.out)
+    if out.suffix.lower() != ".md":
+        raise ValueError(f"초안은 .md 파일로 저장해요: {out.name}")
+    to = None
+    if args.to:
+        m = re.fullmatch(r"(\d{4})-(\d{1,2})", args.to.strip())
+        if not m or not 1 <= int(m.group(2)) <= 12:
+            raise ValueError("--to는 2026-10처럼 써 주세요.")
+        to = (int(m.group(1)), int(m.group(2)))
+    r = carry_mod.carry(_open_any(src, workdir), to=to)
+    out.write_text(r["spec"], encoding="utf-8")
+    if args.json:
+        print(json.dumps({"from": "%d-%02d" % r["from"], "to": "%d-%02d" % r["to"], "spec": r["spec"],
+                          "ask": r["ask"], "warnings": r["warnings"]}, ensure_ascii=False))
+        return 0
+    (fy, fm), (ty, tm) = r["from"], r["to"]
+    print(f"{fy}년 {fm}월 → {ty}년 {tm}월 초안을 만들었어요: {out}")
+    for w in r["warnings"]:
+        print(f"[주의] {w}")
+    if r["ask"]:
+        print("확인할 것:")
+        for a in r["ask"]:
+            extra = f" (지금: {a['current']})" if a["current"] else ""
+            extra += f" → 제안: {a['suggest']}" if a["suggest"] else ""
+            print(f"  - {a['where']}: {a['message']}{extra}")
+    return 0
 
 
 def _cmd_equations(args, workdir) -> int:
@@ -596,6 +643,20 @@ def _parser() -> argparse.ArgumentParser:
     s.add_argument("--refs", action="store_true", help="본문 표·그림 번호도 한글 상호 참조로")
     s.add_argument("--preview", help="쪽 이미지를 만들 폴더 (한글 필요)")
     s.set_defaults(func=_cmd_toc)
+    s = sub.add_parser("table-from", help="엑셀(.xlsx)·CSV를 보고서 마크다운 표로")
+    s.add_argument("file")
+    s.add_argument("--sheet", help="시트 이름 (기본: 첫 시트)")
+    s.add_argument("--range", help="범위 (예: B2:F10, 기본: 값이 있는 영역)")
+    s.add_argument("--caption", help="표 제목 (표: … 줄)")
+    s.add_argument("--header", type=int, default=1, help="머리 행 수 (기본 1)")
+    s.add_argument("--out", help="마크다운을 저장할 파일 (없으면 화면에)")
+    s.set_defaults(func=_cmd_table_from)
+    s = sub.add_parser("carry", help="지난달 보고서로 이번 달 채우기 지시문 초안 만들기")
+    s.add_argument("file", help="지난달 보고서 (.hwpx/.hwp)")
+    s.add_argument("out", help="초안 지시문 .md")
+    s.add_argument("--to", help="이번 달 (예: 2026-10). 문서에서 보고 기간을 못 찾을 때")
+    s.add_argument("--json", action="store_true")
+    s.set_defaults(func=_cmd_carry)
     s = sub.add_parser("presets", help="양식 없이 쓸 수 있는 프리셋 목록")
     s.add_argument("--json", action="store_true")
     s.set_defaults(func=_cmd_presets)
