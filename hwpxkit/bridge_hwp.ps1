@@ -78,6 +78,13 @@ try {
       $r = $hwp.SaveAs($Dst, "HWPX", "")
       Emit @{ ok = [bool]$r; pages = $pages; updated = [bool]$u }
     }
+    "pagemap" {
+      # 실제 쪽마다 본문 글 (인쇄 쪽 번호는 새 쪽 번호로 다시 시작할 수 있어 쓰지 않는다). 엔진이 장 제목 줄을 찾는다.
+      ToTop $hwp
+      $texts = @()
+      for ($i = 0; $i -lt $pages; $i++) { $texts += [string]$hwp.GetPageText($i, 0) }
+      Emit @{ ok = $true; pages = $pages; total = $pages; texts = $texts }
+    }
     default   { Emit @{ ok = $false; error = "unknown_action" } }
   }
 }

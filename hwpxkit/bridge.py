@@ -211,6 +211,17 @@ def refresh_toc(src, dst) -> tuple[Path, bool]:
     return dst, bool(result.get("updated", True))
 
 
+def page_map(path) -> tuple[int, list[str]]:
+    """숨은 한글로 열어 (전체 쪽수, 실제 쪽마다 본문 글)을 돌려준다. 문서는 저장하지 않는다."""
+    _require()
+    with _workdir() as work:
+        result = _run("pagemap", work, src=_stage(path, work))
+    texts = result.get("texts") or []
+    if isinstance(texts, str):  # 쪽이 하나면 PowerShell이 배열을 풀어 버린다
+        texts = [texts]
+    return int(result.get("total", 0)), [str(x) for x in texts]
+
+
 def page_images(path, out_dir) -> list[Path]:
     """쪽마다 PNG(96dpi)를 out_dir/page001.png … 로 만든다."""
     from PIL import Image

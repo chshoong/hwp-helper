@@ -347,6 +347,62 @@ def _cmd_carry(args, workdir) -> int:
     return 0
 
 
+def _cmd_pages(args, workdir) -> int:
+    from . import fit
+    src = _resolve_template(args.file)
+    pkg = _open_any(src, workdir)
+    if not bridge.available():
+        raise PackageError("한글이 있어야 쪽수를 잴 수 있어요. 한글이 설치된 PC에서 다시 해 주세요.")
+    if args.level < 1:
+        raise ValueError("--level은 1 이상이어야 해요.")
+    total, texts = bridge.page_map(src)
+    r = fit.measure(pkg, texts, total, level=args.level, limit=args.limit)
+    if args.json:
+        print(json.dumps(r, ensure_ascii=False))
+        return 0
+    lim = r["limit"]
+    head = f"전체 {total}쪽"
+    if lim:
+        over = total - lim["pages"]
+        state = f"{over}쪽 넘음" if over > 0 else f"{-over}쪽 남음" if over < 0 else "딱 맞음"
+        head += f" (제한 {lim['pages']}쪽 {lim['kind']} → {state})"
+    elif r["limits"]:
+        head += " (분량 제한이 여러 개예요: " + ", ".join(x["text"] for x in r["limits"]) + ")"
+    else:
+        head += " (분량 제한을 찾지 못했어요. 제한이 몇 쪽인가요?)"
+    print(head)
+    if lim and lim.get("exclude"):
+        print(f"[주의] 제외 조건이 있어요: '{lim['context'].strip()}'. 표지·차례·참고문헌처럼 빼는 쪽을 확인한 뒤 비교해 주세요.")
+    for s in r["sections"]:
+        indent = "  " * (s["level"] - 1)
+        span = f"{s['start']}쪽" if s["start"] == s["end"] else f"{s['start']}~{s['end']}쪽"
+        print(f"{indent}{s['title']}  {span} ({s['count']}쪽)")
+    for w in r["warnings"]:
+        print(f"[주의] {w}")
+    return 0
+
+
+def _cmd_guide(args, workdir) -> int:
+    from . import fit
+    r = fit.guide_items(_open_any(_resolve_template(args.file), workdir))
+    if args.json:
+        print(json.dumps(r, ensure_ascii=False))
+        return 0
+    if not r["sections"]:
+        print("양식에서 작성 요령을 찾지 못했어요.")
+    for s in r["sections"]:
+        print(s["title"])
+        for it in s["items"]:
+            if it["kind"] != "배점":
+                print(f"  - [{it['kind']}] {it['text']}")
+    if r["limits"]:
+        print("분량: " + ", ".join(x["text"] + (f" (제외 조건: '{x['context'].strip()}')" if x["exclude"] else "")
+                                   for x in r["limits"]))
+    for w in r["warnings"]:
+        print(f"[주의] {w}")
+    return 0
+
+
 def _cmd_equations(args, workdir) -> int:
     total = _count_equations(_open_any(Path(args.src), workdir))
     out, n = bridge.refresh_equations(Path(args.src), Path(args.dst))
@@ -657,6 +713,16 @@ def _parser() -> argparse.ArgumentParser:
     s.add_argument("--to", help="이번 달 (예: 2026-10). 문서에서 보고 기간을 못 찾을 때")
     s.add_argument("--json", action="store_true")
     s.set_defaults(func=_cmd_carry)
+    s = sub.add_parser("pages", help="장별 쪽수와 분량 제한 재기 (한글 필요)")
+    s.add_argument("file")
+    s.add_argument("--limit", type=int, help="분량 제한 쪽수 (양식에서 못 찾을 때)")
+    s.add_argument("--level", type=int, default=2, help="몇 단계 제목까지 볼지 (기본 2: 장·절)")
+    s.add_argument("--json", action="store_true")
+    s.set_defaults(func=_cmd_pages)
+    s = sub.add_parser("guide", help="양식의 작성 요령·안내·배점을 장별로 보기")
+    s.add_argument("file")
+    s.add_argument("--json", action="store_true")
+    s.set_defaults(func=_cmd_guide)
     s = sub.add_parser("presets", help="양식 없이 쓸 수 있는 프리셋 목록")
     s.add_argument("--json", action="store_true")
     s.set_defaults(func=_cmd_presets)
