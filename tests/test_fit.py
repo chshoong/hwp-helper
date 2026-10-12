@@ -107,3 +107,54 @@ def test_guide_none(blank):
     append_to_body(pkg, para("제1장 서론"))
     append_to_body(pkg, para(LONG))
     assert guide_items(pkg)["sections"] == []
+
+
+def test_page_map_reads_bridge(tmp_path, monkeypatch):
+    from hwpxkit import bridge
+    seen = {}
+
+    def fake_run(action, work, *, src=None, dst=None, fmt=None, timeout=0):
+        seen["action"] = action
+        return {"ok": True, "total": 3, "paras": [1, 1, 2, 3]}
+    monkeypatch.setattr(bridge, "_require", lambda: None)
+    monkeypatch.setattr(bridge, "_run", fake_run)
+    src = tmp_path / "a.hwpx"
+    src.write_bytes(b"x")
+    assert bridge.page_map(src) == (3, [1, 1, 2, 3]) and seen["action"] == "pagemap"
+
+
+def test_cli_pages_text_and_json(blank, tmp_path, monkeypatch, capsys):
+    from hwpxkit import bridge
+    from hwpxkit.cli import main
+    pkg = _doc(blank, ["※ 본문은 2쪽 이내로 작성", "제1장 서론〔10점〕", LONG, "제2장 방법〔30점〕", LONG])
+    src = pkg.save(tmp_path / "보고서.hwpx")
+    monkeypatch.setattr(bridge, "available", lambda: True)
+    monkeypatch.setattr(bridge, "page_map", lambda p: (3, [1, 1, 1, 1, 2, 3]))
+    assert main(["pages", str(src)]) == 0
+    out = capsys.readouterr().out
+    assert "전체 3쪽" in out and "2쪽 이내" in out and "1쪽 넘음" in out and "제2장 방법〔30점〕" in out and "2~3쪽" in out
+    assert main(["pages", str(src), "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["pages"] == 3 and data["sections"][1]["count"] == 2
+
+
+def test_cli_pages_without_hangul(blank, tmp_path, monkeypatch, capsys):
+    from hwpxkit import bridge
+    from hwpxkit.cli import main
+    src = _doc(blank, ["제1장 서론", LONG]).save(tmp_path / "a.hwpx")
+    monkeypatch.setattr(bridge, "available", lambda: False)
+    assert main(["pages", str(src)]) == 2
+    assert "한글이 있어야" in capsys.readouterr().err
+
+
+def test_cli_guide(blank, tmp_path, capsys):
+    from hwpxkit.cli import main
+    src = guide_form(blank).save(tmp_path / "양식.hwpx")
+    assert main(["guide", str(src)]) == 0
+    out = capsys.readouterr().out
+    assert "제1장 서론〔10점〕" in out and "[요령] - 필요성을 제시" in out and "분량: 10쪽 이내" in out
+    assert main(["guide", str(src), "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["sections"][1]["score"] == 10
+    empty = _doc(blank, ["제1장 서론", LONG]).save(tmp_path / "b.hwpx")
+    assert main(["guide", str(empty)]) == 0
+    assert "찾지 못했어요" in capsys.readouterr().out
