@@ -341,3 +341,39 @@ def test_cli_merge_notes_and_errors(blank, tmp_path, capsys, monkeypatch):
     assert json.loads(capsys.readouterr().out)["opinions"][0]["kind"] == "note"
     assert main(["merge", str(src), str(src)]) == 2
     assert "덮어쓸 수 없어요" in capsys.readouterr().err
+
+
+@pytest.mark.hangul
+def test_add_memos_with_hangul(blank, tmp_path):
+    from hwpxkit import bridge
+    from hwpxkit.compare import memos
+    src = base_doc(blank, tmp_path)
+    plan = [{"anchor": "해당 없음", "n": 2, "text": "[홍길동] 둘째 자리"},
+            {"anchor": "120명", "n": 1, "text": "[김철수] 칸 메모"},
+            {"anchor": "없는 글", "n": 1, "text": "x"}]
+    placed, missed = bridge.add_memos(src, tmp_path / "메모본.hwpx", plan)
+    assert placed == 2 and missed == [plan[2]]
+    ms = memos(Package.open(tmp_path / "메모본.hwpx"))
+    texts = {m["text"]: m for m in ms}
+    assert set(texts) == {"[홍길동] 둘째 자리", "[김철수] 칸 메모"}
+    assert texts["[홍길동] 둘째 자리"]["where"] == "제2장 방법"
+
+
+def test_skill_documents_merge():
+    from pathlib import Path
+    root = Path(__file__).parents[1] / "skills" / "hwp-helper"
+    text = (root / "reference" / "merge.md").read_text(encoding="utf-8")
+    for word in ('hwpx.py" compare', 'hwpx.py" merge', "--accept", "--notes", "충돌"):
+        assert word in text, word
+    assert "reference/merge.md" in (root / "SKILL.md").read_text(encoding="utf-8")
+
+
+def test_memo_plan_combines_same_spot(blank, tmp_path):
+    """같은 자리에 붙는 의견은 메모 하나에 줄을 나눠 담는다 (한 자리에 메모를 두 번 달면 둘째는 자리를 못 찾음)."""
+    from hwpxkit.merge import memo_plan, opinions
+    src, a, b = opinion_files(blank, tmp_path)
+    ops = opinions(Package.open(src), [("홍길동", Package.open(a)), ("김철수", Package.open(b))])
+    plan = memo_plan(Package.open(src), ops)
+    assert len(plan) == 2
+    both = next(p for p in plan if "김철수" in p["text"])
+    assert "[홍길동 수정]" in both["text"] and "\n" in both["text"] and both["id"] == "m2,m3"

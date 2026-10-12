@@ -102,6 +102,11 @@ def memo_plan(base_pkg: Package, ops: list[dict]) -> list[dict]:
         if spot is None:
             spot = (us[0].raw[:ANCHOR_LEN].strip(), 1) if us else ("", 1)
             text = "[자리 못 찾음] " + text
+        same = next((x for x in plan if (x["anchor"], x["n"]) == spot), None)
+        if same is not None:  # 한 자리에 메모를 두 번 달면 둘째는 글을 못 찾는다 → 한 메모에 줄을 나눠
+            same["id"] += f",{op['id']}"
+            same["text"] += "\n" + text
+            continue
         plan.append({"id": op["id"], "anchor": spot[0], "n": spot[1], "text": text})
     return plan
 
