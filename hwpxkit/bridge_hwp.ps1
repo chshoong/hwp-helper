@@ -85,6 +85,44 @@ try {
       for ($i = 0; $i -lt $pages; $i++) { $texts += [string]$hwp.GetPageText($i, 0) }
       Emit @{ ok = $true; pages = $pages; total = $pages; texts = $texts }
     }
+    "memos" {
+      # 메모 달기: Format = JSON 파일 [{anchor, n, text}]. 처음부터 anchor를 n번째까지 찾아 그 자리에 한글 메모.
+      $list = Get-Content -Raw -Encoding UTF8 $Format | ConvertFrom-Json
+      # 문서 끝까지 찾으면 "처음부터 다시 찾을까요?"가 떠 멈춘다 → 예/아니오는 아니오, 확인은 확인으로 자동 응답
+      try { $null = $hwp.SetMessageBoxMode(0x22021) } catch {}
+      $placed = 0; $missed = @(); $k = 0
+      foreach ($m in @($list)) {
+        $k++
+        ToTop $hwp
+        $set = $hwp.HParameterSet.HFindReplace
+        $null = $hwp.HAction.GetDefault("RepeatFind", $set.HSet)
+        $set.FindString = [string]$m.anchor; $set.Direction = 0; $set.IgnoreMessage = 1
+        foreach ($opt in @("MatchCase", "WholeWordOnly", "FindRegExp", "FindJaso", "AllWordForms", "SeveralWords", "UseWildCards")) {
+          try { $null = $set.HSet.SetItem($opt, $(if ($opt -eq "MatchCase") { 1 } else { 0 })) } catch {}
+        }
+        $found = $true
+        $seen = @{}  # 찾기가 문서 끝에서 처음으로 돌아가면 같은 자리가 다시 나온다 → 못 찾은 것으로
+        for ($j = 0; $j -lt [int]$m.n; $j++) {
+          if (-not $hwp.HAction.Execute("RepeatFind", $set.HSet)) { $found = $false; break }
+          $ps = $hwp.GetPosBySet(); $at = "$($ps.Item('List'))/$($ps.Item('Para'))/$($ps.Item('Pos'))"
+          if ($seen.ContainsKey($at)) { $found = $false; break }
+          $seen[$at] = $true
+        }
+        if (-not $found) { $missed += $k; continue }
+        $before = [int]$hwp.GetPosBySet().Item("List")
+        $opened = [bool]$hwp.HAction.Run("InsertFieldMemo")
+        if ($opened -and [int]$hwp.GetPosBySet().Item("List") -ne $before) {
+          $ins = $hwp.HParameterSet.HInsertText
+          $null = $hwp.HAction.GetDefault("InsertText", $ins.HSet); $ins.Text = [string]$m.text
+          $null = $hwp.HAction.Execute("InsertText", $ins.HSet)
+          $null = $hwp.HAction.Run("CloseEx")
+          $placed++
+        } else { $null = $hwp.HAction.Run("Cancel"); $missed += $k }
+      }
+      ToTop $hwp
+      $r = $hwp.SaveAs($Dst, "HWPX", "")
+      Emit @{ ok = [bool]$r; pages = $pages; placed = $placed; missed = $missed }
+    }
     default   { Emit @{ ok = $false; error = "unknown_action" } }
   }
 }
