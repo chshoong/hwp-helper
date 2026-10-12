@@ -103,3 +103,94 @@ def test_memo_text_not_in_units(blank, tmp_path):
         p.insert(0, run)
     out = edited(src, tmp_path / "메모만.hwpx", change)
     assert diff(units(Package.open(src)), units(Package.open(out))) == []
+
+
+def add_memo(pkg, i, memo):
+    """i번 문단의 글을 그대로 둔 채 메모로 감싼다 (글은 바뀌지 않음)."""
+    from hwpxkit.body import own_text
+    p = [p for p in pkg.edit(SECTION) if p.tag == q("hp:p")][i]
+    text = own_text(p)
+    for run in p.findall(q("hp:run")):
+        for t in run.findall(q("hp:t")):
+            run.remove(t)
+    p.append(memo_run(text, memo))
+
+
+def opinion_files(blank, tmp_path):
+    src = base_doc(blank, tmp_path)
+
+    def hong(pkg):
+        set_text(pkg, 3, "연구 목적을 설명하는 둘째 문단이며 홍이 고쳤다. " + LONG)
+        add_memo(pkg, 2, "출처를 다세요")
+
+    def kim(pkg):
+        set_text(pkg, 3, "연구 목적을 설명하는 둘째 문단이며 김이 고쳤다. " + LONG)
+    a = edited(src, tmp_path / "보고서_홍길동.hwpx", hong)
+    b = edited(src, tmp_path / "보고서-김철수.hwpx", kim)
+    return src, a, b
+
+
+def test_opinion_name():
+    from pathlib import Path
+    from hwpxkit.merge import opinion_name
+    base = Path("보고서.hwpx")
+    taken = set()
+    assert opinion_name(base, Path("보고서_홍길동.hwpx"), taken) == "홍길동"
+    assert opinion_name(base, Path("보고서-김철수.hwpx"), taken) == "김철수"
+    assert opinion_name(base, Path("보고서_홍길동.hwpx"), taken) == "보고서_홍길동"  # 겹치면 파일 이름
+    assert opinion_name(base, Path("의견.hwpx"), taken) == "의견"
+
+
+def test_opinions_numbered_with_conflict(blank, tmp_path):
+    from hwpxkit.merge import opinions
+    src, a, b = opinion_files(blank, tmp_path)
+    ops = opinions(Package.open(src), [("홍길동", Package.open(a)), ("김철수", Package.open(b))])
+    assert [o["id"] for o in ops] == ["m1", "m2", "m3"]
+    kinds = [(o["who"], o["kind"]) for o in ops]
+    assert kinds == [("홍길동", "memo"), ("홍길동", "edit"), ("김철수", "edit")]
+    assert ops[1]["conflict"] == ["m3"] and ops[2]["conflict"] == ["m2"] and ops[0]["conflict"] == []
+
+
+def test_conflict_marked(blank, tmp_path):
+    from hwpxkit.merge import memo_text, opinions
+    src, a, b = opinion_files(blank, tmp_path)
+    ops = opinions(Package.open(src), [("홍길동", Package.open(a)), ("김철수", Package.open(b))])
+    assert memo_text(ops[0]) == "[홍길동] 출처를 다세요"
+    assert memo_text(ops[1]).startswith("[충돌] [홍길동 수정] 원래: 연구 목적을") and "→ 고친 글:" in memo_text(ops[1])
+
+
+def test_original_memos_not_repeated(blank, tmp_path):
+    from hwpxkit.merge import opinions
+    src = base_doc(blank, tmp_path)
+    with_memo = edited(src, tmp_path / "원본메모.hwpx",
+                       lambda pkg: [p for p in pkg.edit(SECTION) if p.tag == q("hp:p")][1].append(
+                           memo_run("연구 배경", "원래 있던 메모")))
+    copy = tmp_path / "원본메모_박.hwpx"
+    shutil.copy(with_memo, copy)
+    assert opinions(Package.open(with_memo), [("박", Package.open(copy))]) == []
+
+
+def test_notes_become_opinions(blank, tmp_path):
+    from hwpxkit.merge import opinions
+    src = base_doc(blank, tmp_path)
+    ops = opinions(Package.open(src), [], notes=[{"who": "교수님", "where_text": "자료 수집 절차", "text": "표본 크기 근거"}])
+    assert ops == [{"id": "m1", "who": "교수님", "kind": "note", "text": "표본 크기 근거", "anchor": "자료 수집 절차",
+                    "where": "제2장 방법", "conflict": []}]
+
+
+def test_anchor_counts_earlier_occurrences(blank, tmp_path):
+    from hwpxkit.compare import units
+    from hwpxkit.merge import anchor_for
+    us = units(Package.open(base_doc(blank, tmp_path)))
+    assert anchor_for(us, ("p", 8)) == ("해당 없음", 2)
+    assert anchor_for(us, ("p", 6)) == ("해당 없음", 1)
+    assert anchor_for(us, None, text="자료 수집 절차") == ("자료 수집 절차", 1)
+    assert anchor_for(us, None, text="없는 글") is None
+
+
+def test_memo_plan_falls_back(blank, tmp_path):
+    from hwpxkit.merge import memo_plan, opinions
+    src = base_doc(blank, tmp_path)
+    ops = opinions(Package.open(src), [], notes=[{"who": "교수님", "where_text": "없는 글", "text": "의견"}])
+    plan = memo_plan(Package.open(src), ops)
+    assert plan[0]["anchor"] == "제1장 서론" and plan[0]["text"].startswith("[자리 못 찾음] [교수님]")
